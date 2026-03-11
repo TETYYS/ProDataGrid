@@ -146,7 +146,7 @@ namespace Avalonia.Collections
         ///  (This isn't necessary if the IEnumerable is also INotifyCollectionChanged
         ///  because we keep the collection in sync incrementally.)
         /// </summary>
-        private void EnsureCollectionInSync()
+        internal void EnsureCollectionInSync()
         {
             // if the IEnumerable is not a INotifyCollectionChanged
             if (_pollForChanges)

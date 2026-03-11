@@ -337,12 +337,13 @@ public class DataGridStatePersistenceTests
             TokenResolver = registry
         };
 
-        var persisted = DataGridStatePersistenceMapper.ToPersisted(runtime, stateOptions: null, options);
+        var persisted = DataGridStatePersistenceMapper.ToPersisted(runtime, [], stateOptions: null, options);
         Assert.Equal("sorting:comparer", persisted.Sorting.Descriptors[0].ComparerToken);
 
         var restored = DataGridStatePersistenceMapper.ToRuntime(
             persisted,
             DataGridStateSections.All,
+            [],
             stateOptions: null,
             options);
 
@@ -382,12 +383,13 @@ public class DataGridStatePersistenceTests
             TokenResolver = registry
         };
 
-        var persisted = DataGridStatePersistenceMapper.ToPersisted(runtime, stateOptions: null, options);
+        var persisted = DataGridStatePersistenceMapper.ToPersisted(runtime, [], stateOptions: null, options);
         Assert.Equal("filtering:predicate", persisted.Filtering.Descriptors[0].PredicateToken);
 
         var restored = DataGridStatePersistenceMapper.ToRuntime(
             persisted,
             DataGridStateSections.All,
+            [],
             stateOptions: null,
             options);
 
@@ -431,12 +433,13 @@ public class DataGridStatePersistenceTests
             TokenResolver = registry
         };
 
-        var persisted = DataGridStatePersistenceMapper.ToPersisted(runtime, stateOptions: null, options);
+        var persisted = DataGridStatePersistenceMapper.ToPersisted(runtime, [], stateOptions: null, options);
         Assert.Equal("filtering:predicate", persisted.Filtering.Descriptors[0].PredicateToken);
 
         var restored = DataGridStatePersistenceMapper.ToRuntime(
             persisted,
             DataGridStateSections.All,
+            [],
             stateOptions: null,
             options);
 
@@ -480,12 +483,13 @@ public class DataGridStatePersistenceTests
             TokenResolver = registry
         };
 
-        var persisted = DataGridStatePersistenceMapper.ToPersisted(runtime, stateOptions: null, options);
+        var persisted = DataGridStatePersistenceMapper.ToPersisted(runtime, [], stateOptions: null, options);
         Assert.Equal("filtering:predicate", persisted.Filtering.Descriptors[0].PredicateToken);
 
         var restored = DataGridStatePersistenceMapper.ToRuntime(
             persisted,
             DataGridStateSections.All,
+            [],
             stateOptions: null,
             options);
 
@@ -531,13 +535,14 @@ public class DataGridStatePersistenceTests
             TokenResolver = registry
         };
 
-        var persisted = DataGridStatePersistenceMapper.ToPersisted(runtime, stateOptions: null, options);
+        var persisted = DataGridStatePersistenceMapper.ToPersisted(runtime, [], stateOptions: null, options);
         Assert.Equal("conditional:predicate", persisted.ConditionalFormatting.Descriptors[0].PredicateToken);
         Assert.Equal("conditional:theme", persisted.ConditionalFormatting.Descriptors[0].ThemeToken);
 
         var restored = DataGridStatePersistenceMapper.ToRuntime(
             persisted,
             DataGridStateSections.All,
+            [],
             stateOptions: null,
             options);
 
@@ -588,12 +593,13 @@ public class DataGridStatePersistenceTests
             TokenResolver = registry
         };
 
-        var persisted = DataGridStatePersistenceMapper.ToPersisted(runtime, stateOptions: null, options);
+        var persisted = DataGridStatePersistenceMapper.ToPersisted(runtime, [], stateOptions: null, options);
         Assert.Equal("grouping:converter", persisted.Grouping.GroupDescriptions[0].ValueConverterToken);
 
         var restored = DataGridStatePersistenceMapper.ToRuntime(
             persisted,
             DataGridStateSections.All,
+            [],
             stateOptions: null,
             options);
 
@@ -1035,7 +1041,7 @@ public class DataGridStatePersistenceTests
         var withUnknown = json[..^1] + ",\"futureMetadata\":{\"enabled\":true}}";
 
         var deserialized = DataGridStatePersistence.Deserialize(withUnknown);
-        var runtime = DataGridStatePersistenceMapper.ToRuntime(deserialized, DataGridStateSections.All, null, null);
+        var runtime = DataGridStatePersistenceMapper.ToRuntime(deserialized, DataGridStateSections.All, [], null, null);
 
         Assert.Equal(999, deserialized.Version);
         Assert.Equal(999, runtime.Version);
@@ -1069,7 +1075,7 @@ public class DataGridStatePersistenceTests
 
         var payload = DataGridStatePersistence.Serialize(persisted);
         var deserialized = DataGridStatePersistence.Deserialize(payload);
-        var runtime = DataGridStatePersistenceMapper.ToRuntime(deserialized, DataGridStateSections.All, null, null);
+        var runtime = DataGridStatePersistenceMapper.ToRuntime(deserialized, DataGridStateSections.All, [], null, null);
 
         Assert.Equal(0, deserialized.Version);
         Assert.Equal(0, runtime.Version);
@@ -1106,6 +1112,7 @@ public class DataGridStatePersistenceTests
         var runtime = DataGridStatePersistenceMapper.ToRuntime(
             DataGridStatePersistence.Deserialize(payload),
             DataGridStateSections.All,
+            [],
             null,
             null);
 
@@ -1137,10 +1144,11 @@ public class DataGridStatePersistenceTests
         };
 
         Assert.Throws<DataGridStatePersistenceException>(() =>
-            DataGridStatePersistenceMapper.ToPersisted(runtime, null, null));
+            DataGridStatePersistenceMapper.ToPersisted(runtime, [], null, null));
 
         var skipped = DataGridStatePersistenceMapper.ToPersisted(
             runtime,
+            [],
             null,
             new DataGridStatePersistenceOptions
             {
@@ -1174,10 +1182,11 @@ public class DataGridStatePersistenceTests
         };
 
         Assert.Throws<DataGridStatePersistenceException>(() =>
-            DataGridStatePersistenceMapper.ToPersisted(runtime, null, null));
+            DataGridStatePersistenceMapper.ToPersisted(runtime, [], null, null));
 
         var skipped = DataGridStatePersistenceMapper.ToPersisted(
             runtime,
+            [],
             null,
             new DataGridStatePersistenceOptions
             {
@@ -1208,10 +1217,11 @@ public class DataGridStatePersistenceTests
         };
 
         Assert.Throws<DataGridStatePersistenceException>(() =>
-            DataGridStatePersistenceMapper.ToPersisted(runtime, null, null));
+            DataGridStatePersistenceMapper.ToPersisted(runtime, [], null, null));
 
         var skipped = DataGridStatePersistenceMapper.ToPersisted(
             runtime,
+            [],
             null,
             new DataGridStatePersistenceOptions
             {
@@ -1247,11 +1257,12 @@ public class DataGridStatePersistenceTests
         };
 
         Assert.Throws<DataGridStatePersistenceException>(() =>
-            DataGridStatePersistenceMapper.ToRuntime(persisted, DataGridStateSections.All, null, null));
+            DataGridStatePersistenceMapper.ToRuntime(persisted, DataGridStateSections.All, [], null, null));
 
         var runtime = DataGridStatePersistenceMapper.ToRuntime(
             persisted,
             DataGridStateSections.All,
+            [],
             null,
             new DataGridStatePersistenceOptions
             {
@@ -1291,11 +1302,12 @@ public class DataGridStatePersistenceTests
         };
 
         Assert.Throws<DataGridStatePersistenceException>(() =>
-            DataGridStatePersistenceMapper.ToRuntime(persisted, DataGridStateSections.All, null, null));
+            DataGridStatePersistenceMapper.ToRuntime(persisted, DataGridStateSections.All, [], null, null));
 
         var runtime = DataGridStatePersistenceMapper.ToRuntime(
             persisted,
             DataGridStateSections.All,
+            [],
             null,
             new DataGridStatePersistenceOptions
             {
@@ -1329,11 +1341,12 @@ public class DataGridStatePersistenceTests
         };
 
         Assert.Throws<DataGridStatePersistenceException>(() =>
-            DataGridStatePersistenceMapper.ToRuntime(persisted, DataGridStateSections.All, null, null));
+            DataGridStatePersistenceMapper.ToRuntime(persisted, DataGridStateSections.All, [], null, null));
 
         var runtime = DataGridStatePersistenceMapper.ToRuntime(
             persisted,
             DataGridStateSections.All,
+            [],
             null,
             new DataGridStatePersistenceOptions
             {
@@ -1349,12 +1362,13 @@ public class DataGridStatePersistenceTests
         DataGridStateOptions stateOptions = null,
         DataGridStatePersistenceOptions persistenceOptions = null)
     {
-        var persisted = DataGridStatePersistenceMapper.ToPersisted(runtime, stateOptions, persistenceOptions);
+        var persisted = DataGridStatePersistenceMapper.ToPersisted(runtime, [], stateOptions, persistenceOptions);
         var payload = DataGridStatePersistence.Serialize(persisted);
         var deserialized = DataGridStatePersistence.Deserialize(payload);
         return DataGridStatePersistenceMapper.ToRuntime(
             deserialized,
             DataGridStateSections.All,
+            [],
             stateOptions,
             persistenceOptions);
     }

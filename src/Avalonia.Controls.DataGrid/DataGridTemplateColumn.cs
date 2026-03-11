@@ -204,7 +204,7 @@ internal
             var cell = element?.Parent as DataGridCell;
             if(cell is not null && (propertyName == nameof(CellTemplate) || propertyName == nameof(NewRowCellTemplate)))
             {
-                _forceGenerateCellFromTemplate = true;
+                //_forceGenerateCellFromTemplate = true;
                 cell.Content = GenerateElement(cell, cell.DataContext);
             }
 

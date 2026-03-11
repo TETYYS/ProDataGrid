@@ -347,7 +347,7 @@ internal
             }
         }
 
-        internal DataGridCellCollection Cells
+        public DataGridCellCollection Cells
         {
             get;
             private set;

@@ -130,6 +130,67 @@ namespace Avalonia.Collections
             return InternalItemAt(ConvertToInternalIndex(index));
         }
 
+        public Func<int, object> GetItemAtFx(Func<int> countFx)
+        {
+            EnsureCollectionInSync();
+            VerifyRefreshNotDeferred();
+
+            if (IsGrouping)
+            {
+                if (_isUsingTemporaryGroup)
+                {
+                    return (index) => {
+                        // for indices larger than the count
+                        if (index >= countFx() || index < 0)
+                        {
+                            throw new ArgumentOutOfRangeException(nameof(index));
+                        }
+                        return RootGroup?.LeafAt(ConvertToInternalIndex(index));
+                    };
+                }
+                else
+                {
+                    return (index) => {
+                        // for indices larger than the count
+                        if (index >= countFx() || index < 0)
+                        {
+                            throw new ArgumentOutOfRangeException(nameof(index));
+                        }
+                        return RootGroup?.LeafAt(index);
+                    };
+                }
+            }
+
+            if (IsAddingNew && UsesLocalArray)
+            {
+                return (index) => {
+                    // for indices larger than the count
+                    if (index >= countFx() || index < 0)
+                    {
+                        throw new ArgumentOutOfRangeException(nameof(index));
+                    }
+
+                    if (index == countFx() - 1)
+                    {
+                        return CurrentAddItem;
+                    }
+                    return InternalItemAt(ConvertToInternalIndex(index));
+                };
+            }
+            else
+            {
+                return (index) => {
+                    // for indices larger than the count
+                    if (index >= countFx() || index < 0)
+                    {
+                        throw new ArgumentOutOfRangeException(nameof(index));
+                    }
+
+                    return InternalItemAt(ConvertToInternalIndex(index));
+                };
+            }
+        }
+
         /// <summary>
         /// Return the index where the given item appears, or -1 if doesn't appear.
         /// </summary>

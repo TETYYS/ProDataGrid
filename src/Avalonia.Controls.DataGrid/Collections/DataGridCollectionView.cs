@@ -567,6 +567,46 @@ internal
             }
         }
 
+        public Func<int> CountFx
+        {
+            get
+            {
+                EnsureCollectionInSync();
+                VerifyRefreshNotDeferred();
+
+                // if we have paging
+                if (PageSize > 0 && PageIndex > -1)
+                {
+                    if (IsGrouping && !_isUsingTemporaryGroup)
+                    {
+                        return () => _group.ItemCount;
+                    }
+                    else
+                    {
+                        return () => Math.Max(0, Math.Min(PageSize, InternalCount - (_pageSize * PageIndex)));
+                    }
+                }
+                else
+                {
+                    if (IsGrouping)
+                    {
+                        if (_isUsingTemporaryGroup)
+                        {
+                            return () => _temporaryGroup.ItemCount;
+                        }
+                        else
+                        {
+                            return () => _group.ItemCount;
+                        }
+                    }
+                    else
+                    {
+                        return () => InternalCount;
+                    }
+                }
+            }
+        }
+
         /// <summary>
         /// Gets or sets Culture to use during sorting.
         /// </summary>

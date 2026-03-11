@@ -10,7 +10,7 @@ using System.Diagnostics;
 
 namespace Avalonia.Controls
 {
-    internal class DataGridCellCollection
+    public class DataGridCellCollection
     {
         private List<DataGridCell> _cells;
         private DataGridRow _owningRow;

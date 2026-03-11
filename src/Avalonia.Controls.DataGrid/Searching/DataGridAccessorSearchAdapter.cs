@@ -130,7 +130,27 @@ namespace Avalonia.Controls.DataGridSearching
             }
 
             var view = View;
-            if (view is IList list)
+            if (view is DataGridCollectionView collectionView)
+            {
+                var countFx = collectionView.CountFx;
+                var getItemAtFx = collectionView.GetItemAtFx(countFx);
+
+                for (int i = 0; i < countFx(); i++)
+                {
+                    if (!ReferenceEquals(getItemAtFx(i), item))
+                    {
+                        continue;
+                    }
+
+                    if (rowIndex >= 0)
+                    {
+                        return false;
+                    }
+
+                    rowIndex = i;
+                }
+            }
+            else if (view is IList list)
             {
                 for (int i = 0; i < list.Count; i++)
                 {

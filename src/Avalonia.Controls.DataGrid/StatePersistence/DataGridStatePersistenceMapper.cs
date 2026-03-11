@@ -6,7 +6,6 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
-using System.ComponentModel;
 using System.Globalization;
 using System.Linq;
 using Avalonia.Collections;
@@ -23,6 +22,7 @@ namespace Avalonia.Controls
     {
         public static DataGridPersistedState ToPersisted(
             DataGridState state,
+            IReadOnlyCollection<DataGridColumnDefinition> columnDefinitions,
             DataGridStateOptions stateOptions,
             DataGridStatePersistenceOptions persistenceOptions)
         {
@@ -47,7 +47,7 @@ namespace Avalonia.Controls
             }
 
             if (HasSection(state.Sections, DataGridStateSections.Sorting)
-                && TryMapSortingToPersisted(state.Sorting, context, out var sorting))
+                && TryMapSortingToPersisted(state.Sorting, columnDefinitions, context, out var sorting))
             {
                 result.Sorting = sorting;
                 persistedSections |= DataGridStateSections.Sorting;
@@ -109,6 +109,7 @@ namespace Avalonia.Controls
         public static DataGridState ToRuntime(
             DataGridPersistedState persisted,
             DataGridStateSections requestedSections,
+            IReadOnlyCollection<DataGridColumnDefinition> columnDefinitions,
             DataGridStateOptions stateOptions,
             DataGridStatePersistenceOptions persistenceOptions)
         {
@@ -135,7 +136,7 @@ namespace Avalonia.Controls
             }
 
             if (HasSection(targetSections, DataGridStateSections.Sorting)
-                && TryMapSortingToRuntime(persisted.Sorting, context, out var sorting))
+                && TryMapSortingToRuntime(persisted.Sorting, context, columnDefinitions, out var sorting))
             {
                 state.Sorting = sorting;
                 mappedSections |= DataGridStateSections.Sorting;
@@ -406,6 +407,7 @@ namespace Avalonia.Controls
 
         private static bool TryMapSortingToPersisted(
             DataGridSortingState state,
+            IReadOnlyCollection<DataGridColumnDefinition> columnDefinitions,
             ConversionContext context,
             out DataGridPersistedState.SortingState persisted)
         {
@@ -426,20 +428,24 @@ namespace Avalonia.Controls
                         continue;
                     }
 
+                    if (!TryMapValueToPersisted(descriptor.ColumnId, $"Sorting.Descriptors[{i}].ColumnId", context, out var columnId))
+                    {
+                        continue;
+                    }
+
+                    var columnDefinition = columnDefinitions.FirstOrDefault(x => object.Equals(x.ColumnKey, columnId.Value));
+
                     string comparerToken = null;
                     if (descriptor.Comparer != null
                         && !context.TryGetSortingComparerToken(
                             descriptor,
+                            columnDefinition,
                             $"Sorting.Descriptors[{i}].Comparer",
                             out comparerToken))
                     {
                         continue;
                     }
 
-                    if (!TryMapValueToPersisted(descriptor.ColumnId, $"Sorting.Descriptors[{i}].ColumnId", context, out var columnId))
-                    {
-                        continue;
-                    }
 
                     descriptors.Add(new DataGridPersistedState.SortingDescriptorState
                     {
@@ -466,6 +472,7 @@ namespace Avalonia.Controls
         private static bool TryMapSortingToRuntime(
             DataGridPersistedState.SortingState persisted,
             ConversionContext context,
+            IReadOnlyCollection<DataGridColumnDefinition> columnDefinitions,
             out DataGridSortingState state)
         {
             state = null;
@@ -498,6 +505,8 @@ namespace Avalonia.Controls
                         }
                     }
 
+                    var columnDefinition = columnDefinitions.FirstOrDefault(x => object.Equals(x.ColumnKey, columnId));
+
                     if (!TryParseCulture(descriptor.CultureName, $"Sorting.Descriptors[{i}].CultureName", context, out var culture))
                     {
                         continue;
@@ -505,6 +514,8 @@ namespace Avalonia.Controls
 
                     if (!context.TryResolveSortingComparer(
                             descriptor.ComparerToken,
+                            columnDefinition,
+                            culture,
                             $"Sorting.Descriptors[{i}].ComparerToken",
                             out var comparer))
                     {
@@ -1742,7 +1753,7 @@ namespace Avalonia.Controls
                 return false;
             }
 
-            public bool TryGetSortingComparerToken(SortingDescriptor descriptor, string path, out string token)
+            public bool TryGetSortingComparerToken(SortingDescriptor descriptor, DataGridColumnDefinition columnDefinition, string path, out string token)
             {
                 token = null;
                 if (descriptor.Comparer == null)
@@ -1754,6 +1765,12 @@ namespace Avalonia.Controls
                     && _tokenProvider.TryGetSortingComparerToken(descriptor, out token)
                     && !string.IsNullOrWhiteSpace(token))
                 {
+                    return true;
+                }
+
+                if (columnDefinition != null)
+                {
+                    token = null;
                     return true;
                 }
 
@@ -1886,7 +1903,7 @@ namespace Avalonia.Controls
                 return Unsupported(path, "Grouping value converter is runtime-only and no token provider mapping exists.");
             }
 
-            public bool TryResolveSortingComparer(string token, string path, out IComparer comparer)
+            public bool TryResolveSortingComparer(string token, DataGridColumnDefinition columnDefinition, CultureInfo culture, string path, out IComparer comparer)
             {
                 comparer = null;
                 if (string.IsNullOrWhiteSpace(token))
@@ -1898,6 +1915,12 @@ namespace Avalonia.Controls
                     && _tokenResolver.TryResolveSortingComparer(token, out comparer)
                     && comparer != null)
                 {
+                    return true;
+                }
+
+                if (columnDefinition != null)
+                {
+                    comparer = new DataGridColumnValueAccessorComparer(columnDefinition.ValueAccessor, culture);
                     return true;
                 }
 
