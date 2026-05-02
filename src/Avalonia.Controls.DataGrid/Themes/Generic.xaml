@@ -34,7 +34,7 @@
         <StackPanel Spacing="{DynamicResource DataGridFilterEditorSpacing}"
                     Width="{DynamicResource DataGridFilterTextEditorWidth}">
           <TextBlock Text="{Binding Label, FallbackValue=Text filter}" FontWeight="SemiBold" />
-          <TextBox Watermark="Contains"
+          <TextBox PlaceholderText="Contains"
                    Text="{Binding Text, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
           <StackPanel Orientation="Horizontal"
                       Spacing="{DynamicResource DataGridFilterEditorActionSpacing}">
@@ -387,6 +387,12 @@
 
       <!-- DataGridCellTextBlockTheme -->
       <ControlTheme x:Key="DataGridCellTextBlockTheme" TargetType="TextBlock">
+        <Setter Property="Margin" Value="{DynamicResource DataGridCellTextBlockMargin}" />
+        <Setter Property="VerticalAlignment" Value="Center" />
+      </ControlTheme>
+
+      <!-- DataGridCellCustomDrawingTheme -->
+      <ControlTheme x:Key="DataGridCellCustomDrawingTheme" TargetType="controls:DataGridCustomDrawingCell">
         <Setter Property="Margin" Value="{DynamicResource DataGridCellTextBlockMargin}" />
         <Setter Property="VerticalAlignment" Value="Center" />
       </ControlTheme>

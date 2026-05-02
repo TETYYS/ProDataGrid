@@ -2,6 +2,7 @@
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using Avalonia.Controls;
+using Avalonia.Diagnostics;
 using Avalonia.Input;
 using Avalonia.Metadata;
 using Avalonia.Threading;
@@ -31,7 +32,7 @@ namespace Avalonia.Diagnostics.ViewModels
         private bool _shouldVisualizeMarginPadding = true;
         private bool _freezePopups;
         private string? _pointerOverElementName;
-        private IInputRoot? _pointerOverRoot;
+        private TopLevel? _pointerOverRoot;
         private IScreenshotHandler? _screenshotHandler;
         private bool _showPropertyType;
         private bool _showImplementedInterfaces;
@@ -67,22 +68,19 @@ namespace Avalonia.Diagnostics.ViewModels
             if (root is TopLevel topLevel)
             {
                 _pointerOverRoot = topLevel;
-                _pointerOverSubscription = topLevel.GetObservable(TopLevel.PointerOverElementProperty)
-                    .Subscribe(x => PointerOverElement = x);
+            }
 
-            }
-            else
-            {
-                _pointerOverSubscription = InputManager.Instance!.PreProcess
-                    .Subscribe(e =>
-                        {
-                            if (e is Input.Raw.RawPointerEventArgs pointerEventArgs)
-                            {
-                                PointerOverRoot = pointerEventArgs.Root;
-                                PointerOverElement = pointerEventArgs.Root.InputHitTest(pointerEventArgs.Position);
-                            }
-                        });
-            }
+            _pointerOverSubscription = InputManager.Instance!.PreProcess
+                .Subscribe(e =>
+                {
+                    if (e is Input.Raw.RawPointerEventArgs pointerEventArgs &&
+                        pointerEventArgs.Root.GetInputTopLevel() is { } currentTopLevel &&
+                        pointerEventArgs.Root.GetScreenPoint(pointerEventArgs.Position) is { } screenPoint)
+                    {
+                        PointerOverRoot = currentTopLevel;
+                        PointerOverElement = currentTopLevel.InputHitTest(currentTopLevel.PointToClient(screenPoint));
+                    }
+                });
         }
 
         public bool FreezePopups
@@ -239,7 +237,7 @@ namespace Avalonia.Diagnostics.ViewModels
             private set { RaiseAndSetIfChanged(ref _focusedControl, value); }
         }
 
-        public IInputRoot? PointerOverRoot
+        public TopLevel? PointerOverRoot
         {
             get => _pointerOverRoot;
             private set => RaiseAndSetIfChanged(ref _pointerOverRoot, value);

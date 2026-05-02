@@ -4,8 +4,8 @@
 #nullable disable
 
 using System;
+using Avalonia.Data;
 using Avalonia.Data.Core;
-using Avalonia.Markup.Xaml.MarkupExtensions.CompiledBindings;
 
 namespace Avalonia.Controls
 {
@@ -307,6 +307,26 @@ namespace Avalonia.Controls
             Action<DataGridHierarchicalColumnDefinition> configure = null)
         {
             return CreateBoundDefinition<DataGridHierarchicalColumnDefinition, TValue>(header, property, getter, setter, configure);
+        }
+
+        public DataGridCustomDrawingColumnDefinition CustomDrawing<TValue>(
+            object header,
+            CompiledBindingPath path,
+            Func<TItem, TValue> getter,
+            Action<TItem, TValue> setter = null,
+            Action<DataGridCustomDrawingColumnDefinition> configure = null)
+        {
+            return CreateBoundDefinition<DataGridCustomDrawingColumnDefinition, TValue>(header, path, getter, setter, configure);
+        }
+
+        public DataGridCustomDrawingColumnDefinition CustomDrawing<TValue>(
+            object header,
+            IPropertyInfo property,
+            Func<TItem, TValue> getter,
+            Action<TItem, TValue> setter = null,
+            Action<DataGridCustomDrawingColumnDefinition> configure = null)
+        {
+            return CreateBoundDefinition<DataGridCustomDrawingColumnDefinition, TValue>(header, property, getter, setter, configure);
         }
 
         public DataGridComboBoxColumnDefinition ComboBoxSelectedItem<TValue>(
