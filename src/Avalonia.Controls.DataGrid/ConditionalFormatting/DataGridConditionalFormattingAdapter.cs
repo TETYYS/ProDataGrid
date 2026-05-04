@@ -183,6 +183,7 @@ namespace Avalonia.Controls.DataGridConditionalFormatting
         private void OnModelFormattingChanged(object sender, ConditionalFormattingChangedEventArgs e)
         {
             BuildDescriptorCache();
+            UpdateItemSubscriptionsFromView();
             RaiseFormattingChanged();
         }
 
@@ -200,7 +201,7 @@ namespace Avalonia.Controls.DataGridConditionalFormatting
             }
             else
             {
-                if (e.OldItems != null)
+                if (HasDescriptors && e.OldItems != null)
                 {
                     foreach (var item in e.OldItems)
                     {
@@ -208,7 +209,7 @@ namespace Avalonia.Controls.DataGridConditionalFormatting
                     }
                 }
 
-                if (e.NewItems != null)
+                if (HasDescriptors && e.NewItems != null)
                 {
                     foreach (var item in e.NewItems)
                     {
@@ -491,11 +492,18 @@ namespace Avalonia.Controls.DataGridConditionalFormatting
                 return;
             }
 
+            if (!HasDescriptors)
+            {
+                return;
+            }
+
             foreach (var item in _view)
             {
                 AddItemSubscription(item);
             }
         }
+
+        private bool HasDescriptors => _cellDescriptors.Count != 0 || _rowDescriptors.Count != 0;
 
         private void AddItemSubscription(object item)
         {

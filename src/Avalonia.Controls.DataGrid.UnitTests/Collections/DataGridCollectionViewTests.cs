@@ -8,6 +8,10 @@ using System.Data;
 using System.Linq;
 using System.Reflection;
 using Avalonia.Collections;
+using Avalonia.Controls.Selection;
+using Avalonia.Data;
+using Avalonia.Headless.XUnit;
+using Avalonia.Threading;
 using Xunit;
 
 namespace Avalonia.Controls.DataGridTests.Collections;
@@ -15,7 +19,7 @@ namespace Avalonia.Controls.DataGridTests.Collections;
 public class DataGridCollectionViewTests
 {
     [Fact]
-    public void Move_Reorders_View_And_Raises_Remove_Then_Add()
+    public void Move_Reorders_View_And_Raises_Move()
     {
         var items = new ObservableCollection<int> { 1, 2, 3, 4 };
         var view = new DataGridCollectionView(items);
@@ -27,22 +31,146 @@ public class DataGridCollectionViewTests
 
         Assert.Equal(new[] { 1, 3, 4, 2 }, view.Cast<int>().ToArray());
 
-        Assert.Collection(
-            changes,
-            e =>
+        var move = Assert.Single(changes);
+        Assert.Equal(NotifyCollectionChangedAction.Move, move.Action);
+        Assert.Equal(1, move.OldStartingIndex);
+        Assert.Equal(3, move.NewStartingIndex);
+        var oldItems = Assert.IsAssignableFrom<IList>(move.OldItems);
+        Assert.Equal(2, Assert.Single(oldItems.Cast<int>()));
+        var newItems = Assert.IsAssignableFrom<IList>(move.NewItems);
+        Assert.Equal(2, Assert.Single(newItems.Cast<int>()));
+    }
+
+    [AvaloniaFact]
+    public void Move_Does_Not_Report_Selected_Item_As_Deselected()
+    {
+        var first = new object();
+        var selected = new object();
+        var third = new object();
+        var fourth = new object();
+        var items = new ObservableCollection<object> { first, selected, third, fourth };
+        var view = new DataGridCollectionView(items);
+        var selection = new SelectionModel<object>
+        {
+            SingleSelect = false
+        };
+        var grid = new DataGrid
+        {
+            ItemsSource = view,
+            Selection = selection,
+            SelectionMode = DataGridSelectionMode.Extended,
+            AutoGenerateColumns = false,
+            CanUserAddRows = false,
+            CanUserDeleteRows = false
+        };
+
+        var changes = new List<SelectionModelSelectionChangedEventArgs<object>>();
+        selection.SelectionChanged += (_, e) => changes.Add(e);
+
+        selection.Select(1);
+        changes.Clear();
+
+        items.Move(1, 3);
+
+        Assert.Equal(new[] { first, third, fourth, selected }, view.Cast<object>().ToArray());
+        Assert.Single(selection.SelectedItems);
+        Assert.Same(selected, selection.SelectedItems[0]);
+        Assert.Equal(1, selection.SelectedIndex);
+        Assert.True(grid.GetRowSelectionFromRowIndex(3));
+        Assert.False(grid.GetRowSelectionFromRowIndex(1));
+        Assert.DoesNotContain(changes, e => e.DeselectedItems.Count > 0);
+    }
+
+    [AvaloniaFact]
+    public void Move_Does_Not_Expand_Selection_During_Row_Preparation()
+    {
+        var items = new ObservableCollection<object>(
+            Enumerable.Range(0, 60).Select(i => (object)new MoveItem(i)));
+        var selected = items[4];
+        var view = new DataGridCollectionView(items);
+        var selection = new SelectionModel<object>
+        {
+            SingleSelect = false
+        };
+        var grid = new DataGrid
+        {
+            ItemsSource = view,
+            Selection = selection,
+            SelectionMode = DataGridSelectionMode.Extended,
+            AutoGenerateColumns = false,
+            CanUserAddRows = false,
+            CanUserDeleteRows = false,
+            HeadersVisibility = DataGridHeadersVisibility.All
+        };
+        grid.ColumnsInternal.Add(new DataGridTextColumn { Header = "Value", Binding = new Binding(nameof(MoveItem.Value)) });
+
+        var window = new Window
+        {
+            Width = 260,
+            Height = 130,
+            Content = grid
+        };
+        window.SetThemeStyles();
+
+        try
+        {
+            window.Show();
+            PumpLayout(window, grid);
+
+            selection.Select(4);
+            PumpLayout(window, grid);
+
+            var changes = new List<SelectionModelSelectionChangedEventArgs<object>>();
+            selection.SelectionChanged += (_, e) => changes.Add(e);
+
+            foreach (var targetIndex in new[] { 22, 2, 35, 7, 40, 1 })
             {
-                Assert.Equal(NotifyCollectionChangedAction.Remove, e.Action);
-                Assert.Equal(1, e.OldStartingIndex);
-                var oldItems = Assert.IsAssignableFrom<IList>(e.OldItems);
-                Assert.Equal(2, Assert.Single(oldItems.Cast<int>()));
-            },
-            e =>
-            {
-                Assert.Equal(NotifyCollectionChangedAction.Add, e.Action);
-                Assert.Equal(3, e.NewStartingIndex);
-                var newItems = Assert.IsAssignableFrom<IList>(e.NewItems);
-                Assert.Equal(2, Assert.Single(newItems.Cast<int>()));
-            });
+                var currentIndex = items.IndexOf(selected);
+                items.Move(currentIndex, targetIndex);
+                PumpLayout(window, grid);
+
+                var selectedItem = Assert.Single(selection.SelectedItems);
+                Assert.Same(selected, selectedItem);
+            }
+
+            Assert.DoesNotContain(changes, e => e.SelectedItems.Count > 0 || e.DeselectedItems.Count > 0);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [Fact]
+    public void Move_With_Filter_Raises_Move_For_Filtered_Index()
+    {
+        var two = new FilterItem(2);
+        var four = new FilterItem(4);
+        var six = new FilterItem(6);
+        var items = new ObservableCollection<FilterItem>
+        {
+            new(1),
+            two,
+            new(3),
+            four,
+            six
+        };
+        var view = new DataGridCollectionView(items)
+        {
+            Filter = item => ((FilterItem)item).Value % 2 == 0
+        };
+
+        var changes = new List<NotifyCollectionChangedEventArgs>();
+        view.CollectionChanged += (_, e) => changes.Add(e);
+
+        items.Move(1, 4);
+
+        Assert.Equal(new[] { 4, 6, 2 }, view.Cast<FilterItem>().Select(x => x.Value).ToArray());
+        var move = Assert.Single(changes);
+        Assert.Equal(NotifyCollectionChangedAction.Move, move.Action);
+        Assert.Equal(0, move.OldStartingIndex);
+        Assert.Equal(2, move.NewStartingIndex);
+        Assert.Same(two, Assert.Single(move.OldItems!.Cast<FilterItem>()));
     }
 
     [Fact]
@@ -275,9 +403,37 @@ public class DataGridCollectionViewTests
         items.Insert(targetIndex, first);
     }
 
+    private static void PumpLayout(Window window, DataGrid grid)
+    {
+        Dispatcher.UIThread.RunJobs();
+        window.UpdateLayout();
+        grid.UpdateLayout();
+        Dispatcher.UIThread.RunJobs();
+    }
+
     private class Row
     {
         public int Value { get; set; }
+    }
+
+    private sealed class FilterItem
+    {
+        public FilterItem(int value)
+        {
+            Value = value;
+        }
+
+        public int Value { get; }
+    }
+
+    private sealed class MoveItem
+    {
+        public MoveItem(int value)
+        {
+            Value = value;
+        }
+
+        public int Value { get; }
     }
 
     private class SimpleItem

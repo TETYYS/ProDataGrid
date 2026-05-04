@@ -73,7 +73,7 @@ public
 #else
 internal
 #endif
-    sealed partial class DataGridCollectionView : IDataGridCollectionView, IDataGridEditableCollectionView, IList, INotifyPropertyChanged, ITypedList
+    sealed partial class DataGridCollectionView : IDataGridCollectionView, IDataGridEditableCollectionView, IList, INotifyPropertyChanged, ITypedList, Avalonia.Controls.IDataGridIndexOf
     {
         /// <summary>
         /// Since there's nothing in the un-cancelable event args that is mutable,
@@ -902,6 +902,16 @@ internal
         internal int GetGlobalIndexOf(object item) => InternalIndexOf(item);
 
         /// <summary>
+        /// Returns the reference index of the item in the unpaged, filtered, and sorted list, or -1 if not found.
+        /// </summary>
+        internal int GetGlobalReferenceIndexOf(object item)
+        {
+            return TryGetSourceReferenceIndex(item, out var index)
+                ? index
+                : InternalReferenceIndexOf(item);
+        }
+
+        /// <summary>
         /// Gets a value indicating whether this view needs to be refreshed.
         /// </summary>
         public bool NeedsRefresh
@@ -1311,6 +1321,37 @@ internal
                     ProcessCollectionChanged(new NotifyCollectionChangedEventArgs(NotifyCollectionChangedAction.Reset, value));
                 }
             }
+        }
+
+        bool Avalonia.Controls.IDataGridIndexOf.TryGetReferenceIndex(object item, out int index)
+        {
+            EnsureCollectionInSync();
+            VerifyRefreshNotDeferred();
+
+            if (TryGetSourceReferenceIndex(item, out index))
+            {
+                return true;
+            }
+
+            index = ReferenceIndexOf(item);
+            return index >= 0;
+        }
+
+        private bool TryGetSourceReferenceIndex(object item, out int index)
+        {
+            index = -1;
+            if (!IsUsingSourceList ||
+                SourceList is not Avalonia.Controls.IDataGridIndexOf fastIndex ||
+                !fastIndex.TryGetReferenceIndex(item, out var resolved) ||
+                resolved < 0 ||
+                resolved >= SourceList.Count ||
+                !ReferenceEquals(SourceList[resolved], item))
+            {
+                return false;
+            }
+
+            index = resolved;
+            return true;
         }
 
 

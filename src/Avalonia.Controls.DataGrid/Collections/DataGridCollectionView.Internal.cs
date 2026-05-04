@@ -347,6 +347,37 @@ namespace Avalonia.Collections
             return InternalList.IndexOf(item);
         }
 
+        private int InternalReferenceIndexOf(object item)
+        {
+            for (var i = 0; i < InternalList.Count; i++)
+            {
+                if (ReferenceEquals(InternalList[i], item))
+                {
+                    return i;
+                }
+            }
+
+            return -1;
+        }
+
+        private int ReferenceIndexOf(object item)
+        {
+            if (!IsGrouping && PageSize == 0)
+            {
+                return InternalReferenceIndexOf(item);
+            }
+
+            for (var i = 0; i < Count; i++)
+            {
+                if (ReferenceEquals(GetItemAt(i), item))
+                {
+                    return i;
+                }
+            }
+
+            return -1;
+        }
+
         /// <summary>
         /// Return item at the given index in the internal list.
         /// </summary>

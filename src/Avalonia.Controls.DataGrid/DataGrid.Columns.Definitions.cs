@@ -408,6 +408,12 @@ namespace Avalonia.Controls
 
                 var definition = DataGridColumnMetadata.GetDefinition(column);
                 var displayIndex = definition?.DisplayIndex;
+                if (!displayIndex.HasValue || displayIndex.Value < 0)
+                {
+                    var colIdx = column.DisplayIndex;
+                    if (colIdx >= 0)
+                        displayIndex = colIdx;
+                }
                 if (displayIndex.HasValue && displayIndex.Value >= 0)
                 {
                     indexed.Add((column, displayIndex.Value, i));

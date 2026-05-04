@@ -597,18 +597,19 @@ namespace Avalonia.Collections
 
             if (args.Action == NotifyCollectionChangedAction.Move)
             {
-                if (IsUsingSourceList && (args.OldStartingIndex < 0 || args.NewStartingIndex < 0))
+                if (args.OldStartingIndex < 0 || args.NewStartingIndex < 0)
                 {
                     RefreshOrDefer();
                     return;
                 }
 
-                if (args.OldItems != null)
+                if (args.OldItems is { Count: 1 })
                 {
-                    for (var i = 0; i < args.OldItems.Count; i++)
-                    {
-                        ProcessMoveEvent(args.OldItems[i], args.OldStartingIndex + i, args.NewStartingIndex + i);
-                    }
+                    ProcessMoveEvent(args.OldItems[0], args.OldStartingIndex, args.NewStartingIndex);
+                }
+                else
+                {
+                    RefreshOrDefer();
                 }
 
                 return;
@@ -838,34 +839,167 @@ namespace Avalonia.Collections
 
         /// <summary>
         /// Process a Move operation from an INotifyCollectionChanged event handler.
-        /// Moves are handled as a remove followed by an add so existing paging
-        /// and grouping logic can update correctly.
         /// </summary>
         /// <param name="movedItem">Item moved in the source collection.</param>
         /// <param name="oldIndex">Original index in the source collection.</param>
         /// <param name="newIndex">New index in the source collection.</param>
         private void ProcessMoveEvent(object movedItem, int oldIndex, int newIndex)
         {
-            _ = oldIndex;
+            if (oldIndex == newIndex)
+            {
+                return;
+            }
+
+            if (IsUsingSourceList)
+            {
+                ProcessMoveEventUsingSourceList(movedItem, oldIndex, newIndex);
+                return;
+            }
+
+            if (SortDescriptions.Count > 0 || GroupDescriptions.Count > 0 || PageSize > 0)
+            {
+                RefreshOrDefer();
+                return;
+            }
+
+            ProcessMoveEventUsingLocalArray(movedItem, newIndex);
+        }
+
+        private void ProcessMoveEventUsingSourceList(object movedItem, int oldIndex, int newIndex)
+        {
             object oldCurrentItem = CurrentItem;
+            int oldCurrentPosition = CurrentPosition;
             bool oldIsCurrentBeforeFirst = IsCurrentBeforeFirst;
             bool oldIsCurrentAfterLast = IsCurrentAfterLast;
 
-            // Treat move as replace to avoid paging side effects when removing.
-            ProcessRemoveEvent(movedItem, isReplace: true, oldIndexHint: oldIndex);
-            ProcessAddEvent(movedItem, newIndex);
+            AdjustCurrencyForMove(oldCurrentItem);
 
-            if (oldCurrentItem != null && IndexOf(oldCurrentItem) >= 0)
+            OnCollectionChanged(
+            new NotifyCollectionChangedEventArgs(
+            NotifyCollectionChangedAction.Move,
+            movedItem,
+            newIndex,
+            oldIndex));
+
+            RaiseCurrencyChanges(false, oldCurrentItem, oldCurrentPosition, oldIsCurrentBeforeFirst, oldIsCurrentAfterLast);
+        }
+
+        private void ProcessMoveEventUsingLocalArray(object movedItem, int newSourceIndex)
+        {
+            if (Filter != null && !PassesFilter(movedItem))
             {
-                MoveCurrentTo(oldCurrentItem);
+                return;
             }
-            else if (oldIsCurrentBeforeFirst)
+
+            var oldViewIndex = InternalIndexOf(movedItem);
+            if (oldViewIndex < 0)
             {
-                MoveCurrentToPosition(-1);
+                RefreshOrDefer();
+                return;
             }
-            else if (oldIsCurrentAfterLast)
+
+            var newViewIndex = GetFilteredMoveIndex(newSourceIndex, movedItem);
+            if (newViewIndex < 0)
             {
-                MoveCurrentToPosition(Count);
+                RefreshOrDefer();
+                return;
+            }
+
+            if (oldViewIndex == newViewIndex)
+            {
+                return;
+            }
+
+            object oldCurrentItem = CurrentItem;
+            int oldCurrentPosition = CurrentPosition;
+            bool oldIsCurrentBeforeFirst = IsCurrentBeforeFirst;
+            bool oldIsCurrentAfterLast = IsCurrentAfterLast;
+
+            var item = _internalList[oldViewIndex];
+            _internalList.RemoveAt(oldViewIndex);
+            _internalList.Insert(newViewIndex, item);
+
+            AdjustCurrencyForMove(oldCurrentItem);
+
+            OnCollectionChanged(
+            new NotifyCollectionChangedEventArgs(
+            NotifyCollectionChangedAction.Move,
+            movedItem,
+            newViewIndex,
+            oldViewIndex));
+
+            RaiseCurrencyChanges(false, oldCurrentItem, oldCurrentPosition, oldIsCurrentBeforeFirst, oldIsCurrentAfterLast);
+        }
+
+        private int GetFilteredMoveIndex(int newSourceIndex, object movedItem)
+        {
+            if (SourceList != null && newSourceIndex >= 0 && newSourceIndex < SourceList.Count)
+            {
+                return CountPassingItemsBeforeSourceIndex(newSourceIndex);
+            }
+
+            var index = 0;
+            foreach (object item in SourceCollection)
+            {
+                if (IsMoveItemMatch(item, movedItem))
+                {
+                    return index;
+                }
+
+                if (Filter == null || PassesFilter(item))
+                {
+                    index++;
+                }
+            }
+
+            return -1;
+        }
+
+        private int CountPassingItemsBeforeSourceIndex(int sourceIndex)
+        {
+            var index = 0;
+            for (var i = 0; i < sourceIndex; i++)
+            {
+                var item = SourceList[i];
+                if (Filter == null || PassesFilter(item))
+                {
+                    index++;
+                }
+            }
+
+            return index;
+        }
+
+        private static bool IsMoveItemMatch(object item, object movedItem)
+        {
+            if (ReferenceEquals(item, movedItem))
+            {
+                return true;
+            }
+
+            return movedItem == null ? item == null : movedItem.Equals(item);
+        }
+
+        private void AdjustCurrencyForMove(object oldCurrentItem)
+        {
+            if (IsCurrentBeforeFirst || IsCurrentAfterLast)
+            {
+                return;
+            }
+
+            var newPosition = oldCurrentItem == null
+                ? IndexOf(null)
+                : ReferenceIndexOf(oldCurrentItem);
+
+            if (newPosition < 0 && oldCurrentItem != null)
+            {
+                newPosition = IndexOf(oldCurrentItem);
+            }
+
+            if (newPosition >= 0 && (newPosition != CurrentPosition || !IsCurrentInSync))
+            {
+                OnCurrentChanging();
+                SetCurrent(oldCurrentItem, newPosition);
             }
         }
 
@@ -1054,8 +1188,9 @@ namespace Avalonia.Collections
             }
 
             // Collection changes change the count unless an item is being
-            // replaced within the collection.
-            if (args.Action != NotifyCollectionChangedAction.Replace)
+            // replaced or moved within the collection.
+            if (args.Action != NotifyCollectionChangedAction.Replace &&
+                args.Action != NotifyCollectionChangedAction.Move)
             {
                 OnPropertyChanged(nameof(Count));
             }

@@ -210,6 +210,10 @@ internal
 
                     if (view is DataGridCollectionView paged && paged.PageSize > 0)
                     {
+                        _selectionSource?.Dispose();
+                        _selectionSource = null;
+                        _selectionSourceView = null;
+
                         if (_pagedSelectionSource == null || !ReferenceEquals(_pagedSelectionSourceView, paged))
                         {
                             _pagedSelectionSource?.Dispose();
@@ -218,11 +222,28 @@ internal
                         }
                         source = _pagedSelectionSource;
                     }
+                    else if (view is DataGridCollectionView collectionView)
+                    {
+                        _pagedSelectionSource?.Dispose();
+                        _pagedSelectionSource = null;
+                        _pagedSelectionSourceView = null;
+
+                        if (_selectionSource == null || !ReferenceEquals(_selectionSourceView, collectionView))
+                        {
+                            _selectionSource?.Dispose();
+                            _selectionSource = new DataGridSelection.DataGridSelectionSource(collectionView);
+                            _selectionSourceView = collectionView;
+                        }
+                        source = _selectionSource;
+                    }
                     else
                     {
                         _pagedSelectionSource?.Dispose();
                         _pagedSelectionSource = null;
                         _pagedSelectionSourceView = null;
+                        _selectionSource?.Dispose();
+                        _selectionSource = null;
+                        _selectionSourceView = null;
                     }
 
                     _selectionModelAdapter.Model.Source = source;

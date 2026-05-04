@@ -149,10 +149,19 @@ namespace Avalonia.Controls
 
         internal void ApplyState(bool? isSelectedOverride = null)
         {
-            if (RootElement != null && OwningGrid != null && IsVisible)
+            var owner = OwningGrid;
+            if (RootElement != null && owner != null && IsVisible)
             {
-                var isSelected = isSelectedOverride ?? (Slot != -1 && OwningGrid.GetRowSelection(Slot));
-                IsSelected = isSelected;
+                var isSelected = isSelectedOverride ?? (Slot != -1 && owner.GetRowSelection(Slot));
+                var previousSuppress = owner.PushRowSelectionUpdateSuppression();
+                try
+                {
+                    IsSelected = isSelected;
+                }
+                finally
+                {
+                    owner.PopRowSelectionUpdateSuppression(previousSuppress);
+                }
                 UpdateSelectionPseudoClasses();
                 PseudoClassesHelper.Set(PseudoClasses, ":editing", IsEditing);
                 PseudoClassesHelper.Set(PseudoClasses, ":invalid", ValidationSeverity == DataGridValidationSeverity.Error);

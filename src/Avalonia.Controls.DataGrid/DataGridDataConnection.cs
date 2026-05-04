@@ -1294,11 +1294,6 @@ namespace Avalonia.Controls
                                 var item = e.OldItems[i];
                                 _owner.RemoveRowAt(oldIndex, item);
 
-                                if (oldIndex < newIndex)
-                                {
-                                    newIndex--;
-                                }
-
                                 _owner.InsertRowAt(newIndex);
                             }
                         }

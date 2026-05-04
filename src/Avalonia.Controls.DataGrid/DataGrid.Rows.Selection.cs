@@ -324,6 +324,18 @@ namespace Avalonia.Controls
             }
         }
 
+        internal bool PushRowSelectionUpdateSuppression()
+        {
+            var previous = _suppressSelectionUpdatesFromRows;
+            _suppressSelectionUpdatesFromRows = true;
+            return previous;
+        }
+
+        internal void PopRowSelectionUpdateSuppression(bool previous)
+        {
+            _suppressSelectionUpdatesFromRows = previous;
+        }
+
 
     }
 }

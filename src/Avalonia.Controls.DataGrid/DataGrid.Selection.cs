@@ -242,12 +242,28 @@ internal
 
                             if (AnchorSlot != -1)
                             {
-                                int anchorIndex = SelectionIndexFromSlot(AnchorSlot);
-                                if (anchorIndex >= 0)
+                                if (TryGetSelectionSource(out _))
                                 {
-                                    int start = Math.Min(anchorIndex, rowIndex);
-                                    int end = Math.Max(anchorIndex, rowIndex);
-                                    _selectionModelAdapter.SelectRange(start, end);
+                                    int startSlot = Math.Min(AnchorSlot, slot);
+                                    int endSlot = Math.Max(AnchorSlot, slot);
+                                    for (int rangeSlot = startSlot; rangeSlot <= endSlot; rangeSlot++)
+                                    {
+                                        int rangeIndex = SelectionIndexFromSlot(rangeSlot);
+                                        if (rangeIndex >= 0)
+                                        {
+                                            _selectionModelAdapter.Select(rangeIndex);
+                                        }
+                                    }
+                                }
+                                else
+                                {
+                                    int anchorIndex = SelectionIndexFromSlot(AnchorSlot);
+                                    if (anchorIndex >= 0)
+                                    {
+                                        int start = Math.Min(anchorIndex, rowIndex);
+                                        int end = Math.Max(anchorIndex, rowIndex);
+                                        _selectionModelAdapter.SelectRange(start, end);
+                                    }
                                 }
                             }
                             else
@@ -2561,7 +2577,10 @@ internal
 
             if (selectedItem != null)
             {
-                newIndex = GetSelectionModelIndexOfItem(selectedItem);
+                if (!TryGetRowIndexFromItem(selectedItem, out newIndex))
+                {
+                    newIndex = -1;
+                }
             }
 
             SetValueNoCallback(SelectedIndexProperty, newIndex);

@@ -546,7 +546,7 @@ internal
             if (updatedColumn.IsVisible &&
                 ColumnsInternal.VisibleColumnCount == 1 && CurrentColumnIndex == -1)
             {
-                Debug.Assert(SelectedIndex == GetSelectionModelIndexOfItem(SelectedItem));
+                Debug.Assert(!TryGetRowIndexFromItem(SelectedItem, out var selectedRowIndex) || SelectedIndex == selectedRowIndex);
                 if (SelectedIndex != -1)
                 {
                     SetAndSelectCurrentCell(updatedColumn.Index, SelectedIndex, true /*forceCurrentCellSelection*/);
