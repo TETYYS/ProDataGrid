@@ -13,12 +13,16 @@ namespace Avalonia.Controls.DataGridSelection
     {
         private readonly DataGridCollectionView _view;
         private readonly List<object> _items;
+        private readonly Dictionary<object, int> _indexMap;
         private bool _disposed;
 
         public DataGridSelectionSource(DataGridCollectionView view)
         {
             _view = view ?? throw new ArgumentNullException(nameof(view));
             _items = _view.Cast<object>().ToList();
+            _indexMap = new Dictionary<object, int>(_items.Count, ReferenceEqualityComparer.Instance);
+            for (var i = 0; i < _items.Count; i++)
+                _indexMap[_items[i]] = i;
 
             if (_view is INotifyCollectionChanged incc)
             {
@@ -73,19 +77,7 @@ namespace Avalonia.Controls.DataGridSelection
         }
 
         public bool TryGetReferenceIndex(object item, out int index)
-        {
-            for (var i = 0; i < _items.Count; i++)
-            {
-                if (ReferenceEquals(_items[i], item))
-                {
-                    index = i;
-                    return true;
-                }
-            }
-
-            index = -1;
-            return false;
-        }
+            => _indexMap.TryGetValue(item, out index);
 
         private void OnViewCollectionChanged(object sender, NotifyCollectionChangedEventArgs e)
         {
@@ -124,6 +116,7 @@ namespace Avalonia.Controls.DataGridSelection
             foreach (object item in items)
             {
                 var index = _items.Count;
+                _indexMap[item] = index;
                 _items.Add(item);
                 CollectionChanged?.Invoke(
                     this,
@@ -140,14 +133,17 @@ namespace Avalonia.Controls.DataGridSelection
 
             foreach (object item in items)
             {
-                var index = ReferenceIndexOf(item);
-                if (index < 0)
+                if (!_indexMap.TryGetValue(item, out var index))
                 {
                     continue;
                 }
 
+                _indexMap.Remove(item);
                 var removed = _items[index];
                 _items.RemoveAt(index);
+                // Re-index items that shifted down after the removal point.
+                for (var i = index; i < _items.Count; i++)
+                    _indexMap[_items[i]] = i;
                 CollectionChanged?.Invoke(
                     this,
                     new NotifyCollectionChangedEventArgs(NotifyCollectionChangedAction.Remove, removed, index));
@@ -164,13 +160,14 @@ namespace Avalonia.Controls.DataGridSelection
 
             for (var i = 0; i < oldItems.Count; i++)
             {
-                var index = ReferenceIndexOf(oldItems[i]);
-                if (index < 0)
+                if (!_indexMap.TryGetValue(oldItems[i], out var index))
                 {
                     AddItems(new[] { newItems[i] });
                     continue;
                 }
 
+                _indexMap.Remove(oldItems[i]);
+                _indexMap[newItems[i]] = index;
                 var oldItem = _items[index];
                 _items[index] = newItems[i];
                 CollectionChanged?.Invoke(
@@ -186,21 +183,11 @@ namespace Avalonia.Controls.DataGridSelection
         private void ResetItems()
         {
             _items.Clear();
+            _indexMap.Clear();
             _items.AddRange(_view.Cast<object>());
-            CollectionChanged?.Invoke(this, new NotifyCollectionChangedEventArgs(NotifyCollectionChangedAction.Reset));
-        }
-
-        private int ReferenceIndexOf(object item)
-        {
             for (var i = 0; i < _items.Count; i++)
-            {
-                if (ReferenceEquals(_items[i], item))
-                {
-                    return i;
-                }
-            }
-
-            return -1;
+                _indexMap[_items[i]] = i;
+            CollectionChanged?.Invoke(this, new NotifyCollectionChangedEventArgs(NotifyCollectionChangedAction.Reset));
         }
 
         public void Dispose()
