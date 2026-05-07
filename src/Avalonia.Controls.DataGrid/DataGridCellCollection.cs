@@ -32,7 +32,7 @@ namespace Avalonia.Controls
             }
         }
 
-        public IEnumerator GetEnumerator()
+        public List<DataGridCell>.Enumerator GetEnumerator()
         {
             return _cells.GetEnumerator();
         }
