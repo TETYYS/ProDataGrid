@@ -1920,6 +1920,12 @@ namespace Avalonia.Controls
 
                 if (columnDefinition != null)
                 {
+                    if (columnDefinition.CustomSortComparer != null)
+                    {
+                        comparer = columnDefinition.CustomSortComparer;
+                        return true;
+                    }
+
                     comparer = new DataGridColumnValueAccessorComparer(columnDefinition.ValueAccessor, culture);
                     return true;
                 }
