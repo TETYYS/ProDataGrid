@@ -166,6 +166,8 @@ namespace Avalonia.Controls.DataGridSorting
 
         bool OwnsViewSorts { get; set; }
 
+        bool KeepSecondarySorts { get; set; }
+
         event EventHandler<SortingChangedEventArgs> SortingChanged;
 
         event EventHandler<SortingChangingEventArgs> SortingChanging;
@@ -228,6 +230,8 @@ namespace Avalonia.Controls.DataGridSorting
 
         public bool OwnsViewSorts { get; set; }
 
+        public bool KeepSecondarySorts { get; set; }
+
         public event EventHandler<SortingChangedEventArgs> SortingChanged;
 
         public event EventHandler<SortingChangingEventArgs> SortingChanging;
@@ -247,7 +251,20 @@ namespace Avalonia.Controls.DataGridSorting
 
             if (!multiGesture)
             {
-                RemoveAllExcept(next, descriptor.ColumnId, ref existingIndex);
+                if (KeepSecondarySorts)
+                {
+                    if (existingIndex > 0)
+                    {
+                        var item = next[existingIndex];
+                        next.RemoveAt(existingIndex);
+                        next.Insert(0, item);
+                        existingIndex = 0;
+                    }
+                }
+                else
+                {
+                    RemoveAllExcept(next, descriptor.ColumnId, ref existingIndex);
+                }
             }
 
             if (clearGesture)
@@ -277,11 +294,18 @@ namespace Avalonia.Controls.DataGridSorting
                 else
                 {
                     next.RemoveAt(existingIndex);
+                    if (!multiGesture && KeepSecondarySorts)
+                    {
+                        next.Clear();
+                    }
                 }
             }
             else
             {
-                next.Add(descriptor);
+                if (!multiGesture && KeepSecondarySorts)
+                    next.Insert(0, descriptor);
+                else
+                    next.Add(descriptor);
             }
 
             ApplyState(next);
