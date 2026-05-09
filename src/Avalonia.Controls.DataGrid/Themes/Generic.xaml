@@ -820,7 +820,7 @@
                     <Grid>
                       <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="Auto" MinWidth="{DynamicResource DataGridSortIconMinWidth}" />
+                        <ColumnDefinition Width="Auto" />
                       </Grid.ColumnDefinitions>
 
                       <ContentPresenter x:Name="PART_ContentPresenter"
@@ -832,6 +832,7 @@
                       <StackPanel Grid.Column="1"
                                   Orientation="Horizontal"
                                   Spacing="{DynamicResource DataGridColumnHeaderIconSpacing}"
+                                  Margin="4,0,0,0"
                                   HorizontalAlignment="Center"
                                   VerticalAlignment="Center">
                       <Button Name="PART_FilterButton"
