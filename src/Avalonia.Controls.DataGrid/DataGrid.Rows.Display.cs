@@ -22,6 +22,10 @@ namespace Avalonia.Controls
     #endif
     partial class DataGrid
     {
+        // Shared empty clip used to hide recycled elements without setting IsVisible=false.
+        // Using clip instead of IsVisible avoids InvalidateMeasure, which would force
+        // a full re-measure of the row template on every recycle/re-insert cycle.
+        private static readonly RectangleGeometry _recycledElementClip = new RectangleGeometry();
 
         private void UpdateDisplayedRows(int newFirstDisplayedSlot, double displayHeight)
         {
@@ -439,7 +443,11 @@ namespace Avalonia.Controls
 
         internal void HideRecycledElement(Control element)
         {
-            element.SetCurrentValue(Visual.IsVisibleProperty, false);
+            // Use an empty clip instead of IsVisible=false. Changing IsVisible invalidates
+            // the element's measure (forcing a full re-measure when re-inserted), while
+            // changing Clip only invalidates rendering. LoadRowVisualsForDisplay already
+            // calls ClearValue(ClipProperty) when re-inserting, clearing this clip.
+            element.Clip = _recycledElementClip;
 
             if (RecycledContainerHidingMode == DataGridRecycleHidingMode.MoveOffscreen)
             {

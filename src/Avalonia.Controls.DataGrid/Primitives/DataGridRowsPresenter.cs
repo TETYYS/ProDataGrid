@@ -34,7 +34,6 @@ internal
     sealed partial class DataGridRowsPresenter : Panel, IChildIndexProvider
     {
         private EventHandler<ChildIndexChangedEventArgs>? _childIndexChanged;
-        private TopLevel? _observedTopLevel;
         private int _virtualizationGuardDepth;
         private DataGrid? _owningGrid;
         private double _lastArrangeHeight;
@@ -82,12 +81,10 @@ internal
         protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
         {
             base.OnAttachedToVisualTree(e);
-            HookTopLevel(e.Root as TopLevel ?? TopLevel.GetTopLevel(this));
         }
 
         protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
         {
-            UnhookTopLevel();
             base.OnDetachedFromVisualTree(e);
         }
 
@@ -286,23 +283,15 @@ internal
             };
             Clip = rg;
 
-            // Arrange any hidden/recycled children off-screen to prevent ghost rows
-            // This is necessary because Avalonia keeps elements at their last arranged position
-            // even when they're hidden, and during fast scrolling the visibility change may not
-            // take effect before the next render
+            // Arrange any hidden/recycled children off-screen to prevent ghost rows.
+            // HideRecycledElement uses an empty Clip (not IsVisible=false) so rows stay
+            // measure-valid; the call is idempotent once the clip is already set.
             var offScreenRect = new Rect(-10000, -10000, 0, 0);
             foreach (Control child in Children)
             {
                 if (!displayedElements.Contains(child))
                 {
-                    if (child.IsVisible)
-                    {
-                        OwningGrid.HideRecycledElement(child);
-                    }
-                    child.Arrange(offScreenRect);
-                }
-                else if (!child.IsVisible)
-                {
+                    OwningGrid.HideRecycledElement(child);
                     child.Arrange(offScreenRect);
                 }
             }
@@ -559,49 +548,6 @@ internal
             e.Handled = e.Handled || OwningGrid.UpdateScroll(-e.Delta);
         }
 
-        private void HookTopLevel(TopLevel? topLevel)
-        {
-            if (ReferenceEquals(_observedTopLevel, topLevel))
-            {
-                return;
-            }
-
-            UnhookTopLevel();
-            _observedTopLevel = topLevel;
-
-            if (_observedTopLevel != null)
-            {
-                _observedTopLevel.PropertyChanged += OnTopLevelPropertyChanged;
-            }
-        }
-
-        private void UnhookTopLevel()
-        {
-            if (_observedTopLevel != null)
-            {
-                _observedTopLevel.PropertyChanged -= OnTopLevelPropertyChanged;
-                _observedTopLevel = null;
-            }
-        }
-
-        private void OnTopLevelPropertyChanged(object? sender, AvaloniaPropertyChangedEventArgs e)
-        {
-            if (e.Property != Layoutable.HeightProperty &&
-                e.Property != Layoutable.WidthProperty &&
-                e.Property != Visual.BoundsProperty)
-            {
-                return;
-            }
-
-            if (sender is TopLevel topLevel && OwningGrid?.UseLogicalScrollable == true)
-            {
-                RefreshViewportFromTopLevel(topLevel);
-            }
-
-            InvalidateMeasure();
-            InvalidateArrange();
-        }
-
         private double GetColumnHeadersHeight()
         {
             if (OwningGrid?.AreColumnHeadersVisible != true)
@@ -630,38 +576,9 @@ internal
             return 0;
         }
 
-        private void RefreshViewportFromTopLevel(TopLevel topLevel)
-        {
-            if (OwningGrid == null)
-            {
-                return;
-            }
-
-            var headerHeight = GetColumnHeadersHeight();
-            var viewportHeight = topLevel.Height;
-            if (double.IsNaN(viewportHeight) || double.IsInfinity(viewportHeight) || viewportHeight <= 0)
-            {
-                viewportHeight = topLevel.Bounds.Height;
-            }
-
-            viewportHeight = Math.Max(0, viewportHeight - headerHeight);
-
-            if (OwningGrid.RowsPresenterAvailableSize is { } availableSize)
-            {
-                OwningGrid.RowsPresenterAvailableSize = availableSize.WithHeight(viewportHeight);
-            }
-
-            var viewportWidth = _viewport.Width > 0 ? _viewport.Width : Bounds.Width;
-            if (!double.IsNaN(viewportWidth) && !double.IsInfinity(viewportWidth) &&
-                !double.IsNaN(viewportHeight) && !double.IsInfinity(viewportHeight))
-            {
-                UpdateScrollInfo(_extent, new Size(Math.Max(0, viewportWidth), viewportHeight));
-            }
-        }
-
         private sealed class ActionDisposable : IDisposable
         {
-            private Action _onDispose;
+            private Action? _onDispose;
 
             public ActionDisposable(Action onDispose)
             {
