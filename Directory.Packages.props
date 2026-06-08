@@ -4,7 +4,7 @@
     <CentralPackageTransitivePinningEnabled>true</CentralPackageTransitivePinningEnabled>
   </PropertyGroup>
   <PropertyGroup>
-    <AvaloniaVersion>12.0.2</AvaloniaVersion>
+    <AvaloniaVersion>12.0.4</AvaloniaVersion>
   </PropertyGroup>
   <!-- Avalonia packages -->
   <ItemGroup>
@@ -31,7 +31,7 @@
   <!-- Build tooling -->
   <ItemGroup>
     <PackageVersion Include="Microsoft.Build.Utilities.Core" Version="18.0.2" />
-    <PackageVersion Include="Microsoft.SourceLink.GitHub" Version="10.0.203" />
+    <PackageVersion Include="Microsoft.SourceLink.GitHub" Version="10.0.300" />
     <PackageVersion Include="Mono.Cecil" Version="0.11.6" />
     <PackageVersion Include="Microsoft.WindowsDesktop.App.Ref" Version="8.0.22" />
   </ItemGroup>
