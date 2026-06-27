@@ -4,6 +4,7 @@
 // All other rights reserved.
 
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Diagnostics;
 using Avalonia.Controls.Selection;
@@ -112,6 +113,29 @@ namespace Avalonia.Controls
             {
                 AnchorSlot = -1;
             }
+
+            // Capture the displayed rows that are currently painted as selected before the
+            // selection is cleared. We key off the row's visual state (IsSelected) rather
+            // than the live selection model: when selection is driven by a bound
+            // SelectionModel the model is often already cleared by the time we get here, so
+            // querying it would find nothing while the rows are still painted as selected.
+            // Re-applying state on exactly these rows afterwards reflects the deselection
+            // immediately (without it the rows stay highlighted until the next pointer-over
+            // refresh) and without touching unrelated rows.
+            List<DataGridRow>? previouslySelectedRows = null;
+            if (DisplayData != null)
+            {
+                for (int slot = DisplayData.FirstScrollingSlot;
+                slot > -1 && slot <= DisplayData.LastScrollingSlot;
+                slot++)
+                {
+                    if (DisplayData.GetDisplayedElement(slot) is DataGridRow row && row.IsSelected)
+                    {
+                        (previouslySelectedRows ??= new List<DataGridRow>()).Add(row);
+                    }
+                }
+            }
+
             ClearSelectionModelForRowSelection(null);
 
             if (_selectedItems.Count > 0)
@@ -138,6 +162,15 @@ namespace Avalonia.Controls
                 finally
                 {
                     NoSelectionChangeCount--;
+                }
+            }
+
+            if (previouslySelectedRows != null)
+            {
+                foreach (var row in previouslySelectedRows)
+                {
+                    row.ApplyState();
+                    row.ApplyCellsState();
                 }
             }
         }
