@@ -1622,6 +1622,201 @@ public class HierarchicalHeadlessTests
         }
     }
 
+    [AvaloniaFact]
+    public void Clearing_All_Roots_Removes_Rows_In_A_Single_Bulk_Operation()
+    {
+        var roots = new ObservableCollection<Item>();
+        for (int i = 0; i < 60; i++)
+        {
+            roots.Add(CreateTree($"Root {i + 1}", childCount: 4, grandchildCount: 0));
+        }
+        using var themeScope = UseApplicationTheme(DataGridTheme.SimpleV2);
+
+        var model = new HierarchicalModel(new HierarchicalOptions
+        {
+            ChildrenSelector = o => ((Item)o).Children,
+            AutoExpandRoot = false,
+            VirtualizeChildren = true
+        });
+        model.SetRoots(roots);
+
+        var estimator = new RecordingRowHeightEstimator();
+        var grid = new DataGrid
+        {
+            HierarchicalModel = model,
+            HierarchicalRowsEnabled = true,
+            AutoGenerateColumns = false,
+            UseLogicalScrollable = true,
+            RowHeight = 24,
+            RowHeightEstimator = estimator
+        };
+
+        grid.ColumnsInternal.Add(new DataGridHierarchicalColumn
+        {
+            Header = "Name",
+            Binding = new Avalonia.Data.Binding("Item.Name")
+        });
+
+        var window = new Window
+        {
+            Width = 420,
+            Height = 260,
+            Content = grid
+        };
+
+        window.SetThemeStyles(DataGridTheme.SimpleV2);
+        window.Show();
+        PumpLayout(grid);
+
+        var rowCount = model.Count;
+        Assert.Equal(roots.Count, rowCount);
+        Assert.Equal(rowCount, grid.SlotCount);
+
+        estimator.Removals.Clear();
+        model.ClearAll();
+        PumpLayout(grid);
+
+        // The whole clear must arrive as one removal. Falling back to the per-row path would
+        // report rowCount separate single-item removals instead.
+        var removal = Assert.Single(estimator.Removals);
+        Assert.Equal((0, rowCount), removal);
+
+        Assert.Equal(0, model.Count);
+        Assert.Equal(0, grid.SlotCount);
+        // Recycled containers stay parented (KeepRecycledContainersInVisualTree defaults to true),
+        // so emptiness is asserted through DisplayData rather than the visual tree.
+        Assert.Empty(grid.DisplayData.GetScrollingElements());
+        Assert.Equal(-1, grid.DisplayData.FirstScrollingSlot);
+
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void Clearing_All_Roots_Then_Setting_New_Root_Repopulates_Grid()
+    {
+        var roots = new ObservableCollection<Item>();
+        for (int i = 0; i < 40; i++)
+        {
+            roots.Add(CreateTree($"Root {i + 1}", childCount: 3, grandchildCount: 0));
+        }
+        using var themeScope = UseApplicationTheme(DataGridTheme.SimpleV2);
+
+        var model = new HierarchicalModel(new HierarchicalOptions
+        {
+            ChildrenSelector = o => ((Item)o).Children,
+            AutoExpandRoot = true,
+            VirtualizeChildren = true
+        });
+        model.SetRoots(roots);
+
+        var grid = new DataGrid
+        {
+            HierarchicalModel = model,
+            HierarchicalRowsEnabled = true,
+            AutoGenerateColumns = false,
+            UseLogicalScrollable = true,
+            RowHeight = 24
+        };
+
+        grid.ColumnsInternal.Add(new DataGridHierarchicalColumn
+        {
+            Header = "Name",
+            Binding = new Avalonia.Data.Binding("Item.Name")
+        });
+
+        var window = new Window
+        {
+            Width = 420,
+            Height = 260,
+            Content = grid
+        };
+
+        window.SetThemeStyles(DataGridTheme.SimpleV2);
+        window.Show();
+        PumpLayout(grid);
+
+        var scrollViewer = grid.ScrollViewer;
+        Assert.NotNull(scrollViewer);
+        scrollViewer!.Offset = new Vector(0, 400);
+        PumpLayout(grid);
+        Assert.True(grid.DisplayData.FirstScrollingSlot > 0);
+
+        model.ClearAll();
+        PumpLayout(grid);
+
+        Assert.Equal(0, grid.SlotCount);
+        Assert.Empty(grid.DisplayData.GetScrollingElements());
+
+        // The bulk clear must not leave stale slot/scroll state behind for the next population.
+        var replacement = CreateTree("Replacement", childCount: 5, grandchildCount: 0);
+        model.SetRoot(replacement);
+        PumpLayout(grid);
+
+        Assert.Equal(model.Count, grid.SlotCount);
+        Assert.Equal(6, model.Count);
+        Assert.NotEmpty(grid.DisplayData.GetScrollingElements());
+        ValidateDisplayedRows(grid, model);
+
+        window.Close();
+    }
+
+    /// <summary>
+    /// Wraps the default estimator and records the shape of every removal so tests can tell the
+    /// bulk clear path apart from the per-row one.
+    /// </summary>
+    private sealed class RecordingRowHeightEstimator : IDataGridRowHeightEstimator
+    {
+        private readonly AdvancedRowHeightEstimator _inner = new();
+
+        public List<(int StartIndex, int Count)> Removals { get; } = new();
+
+        public double DefaultRowHeight
+        {
+            get => _inner.DefaultRowHeight;
+            set => _inner.DefaultRowHeight = value;
+        }
+
+        public double RowHeightEstimate => _inner.RowHeightEstimate;
+
+        public double RowDetailsHeightEstimate => _inner.RowDetailsHeightEstimate;
+
+        public double GetRowGroupHeaderHeightEstimate(int level) => _inner.GetRowGroupHeaderHeightEstimate(level);
+
+        public void RecordMeasuredHeight(int slot, double measuredHeight, bool hasDetails = false, double detailsHeight = 0) =>
+            _inner.RecordMeasuredHeight(slot, measuredHeight, hasDetails, detailsHeight);
+
+        public void RecordRowGroupHeaderHeight(int slot, int level, double measuredHeight) =>
+            _inner.RecordRowGroupHeaderHeight(slot, level, measuredHeight);
+
+        public double GetEstimatedHeight(int slot, bool isRowGroupHeader = false, int rowGroupLevel = 0, bool hasDetails = false) =>
+            _inner.GetEstimatedHeight(slot, isRowGroupHeader, rowGroupLevel, hasDetails);
+
+        public double CalculateTotalHeight(int totalSlotCount, int collapsedSlotCount, int[] rowGroupHeaderCounts, int detailsVisibleCount) =>
+            _inner.CalculateTotalHeight(totalSlotCount, collapsedSlotCount, rowGroupHeaderCounts, detailsVisibleCount);
+
+        public int EstimateSlotAtOffset(double verticalOffset, int totalSlotCount) =>
+            _inner.EstimateSlotAtOffset(verticalOffset, totalSlotCount);
+
+        public double EstimateOffsetToSlot(int slot) => _inner.EstimateOffsetToSlot(slot);
+
+        public void UpdateFromDisplayedRows(int firstDisplayedSlot, int lastDisplayedSlot, double[] displayedHeights, double verticalOffset, double negVerticalOffset, int collapsedSlotCount, int detailsCount) =>
+            _inner.UpdateFromDisplayedRows(firstDisplayedSlot, lastDisplayedSlot, displayedHeights, verticalOffset, negVerticalOffset, collapsedSlotCount, detailsCount);
+
+        public void Reset() => _inner.Reset();
+
+        public void OnDataSourceChanged(int newItemCount) => _inner.OnDataSourceChanged(newItemCount);
+
+        public void OnItemsInserted(int startIndex, int count) => _inner.OnItemsInserted(startIndex, count);
+
+        public void OnItemsRemoved(int startIndex, int count)
+        {
+            Removals.Add((startIndex, count));
+            _inner.OnItemsRemoved(startIndex, count);
+        }
+
+        public RowHeightEstimatorDiagnostics GetDiagnostics() => _inner.GetDiagnostics();
+    }
+
     private static void AssertNoVisibleRowsOutsideDisplayData(DataGrid grid)
     {
         var displayElements = new HashSet<Control>(grid.DisplayData.GetScrollingElements());

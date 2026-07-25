@@ -250,6 +250,13 @@ namespace Avalonia.Controls.DataGridHierarchical
         void SetRoots(IEnumerable rootItems);
 
         /// <summary>
+        /// Removes every root along with its materialized descendants, leaving an empty virtual root.
+        /// Cheaper than <see cref="SetRoots"/> with an empty collection: no expanded state is captured
+        /// or restored, and no root collection is observed afterwards.
+        /// </summary>
+        void ClearAll();
+
+        /// <summary>
         /// Gets the collection of items displayed at root level.
         /// When <see cref="IsVirtualRoot"/> is true, returns the children of the virtual root.
         /// When false, returns the single root item.
@@ -622,7 +629,11 @@ namespace Avalonia.Controls.DataGridHierarchical
                 throw new ArgumentNullException(nameof(rootItems));
             }
 
-            var expandedItems = CaptureExpandedItems();
+            // With no incoming roots there is nothing to restore into, so skip the walk of the
+            // outgoing tree. Only a known-empty collection can be tested without enumerating.
+            var expandedItems = rootItems is ICollection { Count: 0 }
+                ? new HashSet<object>()
+                : CaptureExpandedItems();
             _isVirtualRoot = true;
             _rootItems = rootItems;
 
@@ -679,6 +690,26 @@ namespace Avalonia.Controls.DataGridHierarchical
             {
                 OnNodeExpanded(expandedNode);
             }
+        }
+
+        public void ClearAll()
+        {
+            _isVirtualRoot = true;
+            _rootItems = Array.Empty<object>();
+
+            // Same shape as SetRoots, minus the parts that only matter when items survive the call:
+            // no expanded state is captured or restored, no child nodes are built and nothing is
+            // observed for later additions.
+            var virtualRoot = new HierarchicalNode(new VirtualRootContainer(_rootItems), parent: null, level: -1, isLeaf: false);
+            InitializeNode(virtualRoot);
+            virtualRoot.ChildrenSource = _rootItems;
+            virtualRoot.HasMaterializedChildren = true;
+            SetNodeExpandedState(virtualRoot, true);
+
+            SetRoot(virtualRoot, rebuildFlattened: false);
+
+            _pendingCullNodes.Clear();
+            ReplaceFlattened(Array.Empty<HierarchicalNode>());
         }
 
         private IEnumerable<HierarchicalNode> BuildFlattenedFromVirtualRoot(HierarchicalNode virtualRoot)

@@ -3139,6 +3139,11 @@ internal
                 return;
             }
 
+            if (TryApplyHierarchicalClear(changes))
+            {
+                return;
+            }
+
             foreach (var change in changes)
             {
                 for (var i = 0; i < change.OldCount; i++)
@@ -3151,6 +3156,34 @@ internal
                     InsertRowAt(change.Index + i);
                 }
             }
+        }
+
+        /// <summary>
+        /// Handles a change that removes every row and inserts none. Removing them one at a time is
+        /// quadratic: each <see cref="RemoveRowAt"/> walks the loaded and displayed rows to shift
+        /// their slots and recomputes the scroll bar layout. Dropping them in a single pass is linear.
+        /// </summary>
+        private bool TryApplyHierarchicalClear(IReadOnlyList<FlattenedChange> changes)
+        {
+            if (changes.Count != 1)
+            {
+                return false;
+            }
+
+            var change = changes[0];
+            if (change.Index != 0 || change.NewCount != 0 || change.OldCount == 0 || change.OldCount != SlotCount)
+            {
+                return false;
+            }
+
+            RowHeightEstimator?.OnItemsRemoved(0, change.OldCount);
+            ClearRows(recycle: true);
+
+            // Grouping is off on this path (CanApplyHierarchicalFlattenedChanges bails otherwise), so
+            // this stands in for the per-slot table updates RemoveRowAt would have done.
+            ClearRowGroupHeadersTable();
+            RequestPointerOverRefresh();
+            return true;
         }
 
         private void EnsureDisplayedRowsInRange()
