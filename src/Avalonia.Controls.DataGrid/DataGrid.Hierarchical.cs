@@ -190,9 +190,9 @@ namespace Avalonia.Controls
                 if (element is DataGridRow row)
                 {
                     var stateChanged = false;
-                    if (!row.IsVisible)
+                    if (IsRecycledElementHidden(row))
                     {
-                        row.ClearValue(Visual.IsVisibleProperty);
+                        RestoreRecycledElement(row);
                         stateChanged = true;
                     }
                     if (row.Slot != slot)

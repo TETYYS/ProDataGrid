@@ -66,7 +66,7 @@ namespace Avalonia.Controls
 
         internal DataGridRow? GetRecycledRow()
         {
-            return PopFromRecyclePool(_recycledRows, RestoreElementVisibility);
+            return PopFromRecyclePool(_recycledRows, DataGrid.RestoreRecycledElement);
         }
 
         internal void TrimRecycledPools(DataGridRowsPresenter owner, int maxRecycledRows, int maxRecycledGroupHeaders, int maxRecycledGroupFooters)
@@ -107,7 +107,7 @@ namespace Avalonia.Controls
 
         internal DataGridRowGroupHeader? GetRecycledGroupHeader()
         {
-            return PopFromRecyclePool(_recycledGroupHeaders, RestoreElementVisibility);
+            return PopFromRecyclePool(_recycledGroupHeaders, DataGrid.RestoreRecycledElement);
         }
 
         internal void RecycleGroupFooter(DataGridRowGroupFooter groupFooter)
@@ -120,7 +120,7 @@ namespace Avalonia.Controls
 
         internal DataGridRowGroupFooter? GetRecycledGroupFooter()
         {
-            return PopFromRecyclePool(_recycledGroupFooters, RestoreElementVisibility);
+            return PopFromRecyclePool(_recycledGroupFooters, DataGrid.RestoreRecycledElement);
         }
 
         #endregion
@@ -334,11 +334,6 @@ namespace Avalonia.Controls
         private void HideElement(Control element)
         {
             _owner?.HideRecycledElement(element);
-        }
-
-        private static void RestoreElementVisibility(Control element)
-        {
-            element.ClearValue(Visual.IsVisibleProperty);
         }
 
         private static void PushToRecyclePool<T>(Stack<T> pool, T element) where T : Control

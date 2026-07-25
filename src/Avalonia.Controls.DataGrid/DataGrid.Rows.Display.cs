@@ -22,10 +22,12 @@ namespace Avalonia.Controls
     #endif
     partial class DataGrid
     {
-        // Shared empty clip used to hide recycled elements without setting IsVisible=false.
+        // Empty clip used to hide recycled elements without setting IsVisible=false.
         // Using clip instead of IsVisible avoids InvalidateMeasure, which would force
         // a full re-measure of the row template on every recycle/re-insert cycle.
-        private static readonly RectangleGeometry _recycledElementClip = new RectangleGeometry();
+        // Kept per-grid rather than static: a Geometry's platform impl has thread
+        // affinity, so sharing one across grids on different UI threads throws.
+        private RectangleGeometry _recycledElementClip;
 
         private void UpdateDisplayedRows(int newFirstDisplayedSlot, double displayHeight)
         {
@@ -297,8 +299,7 @@ namespace Avalonia.Controls
         private void LoadRowVisualsForDisplay(DataGridRow row)
         {
             // Restore visibility for rows that were hidden during recycling
-            row.ClearValue(Visual.IsVisibleProperty);
-            row.ClearValue(Visual.ClipProperty);
+            RestoreRecycledElement(row);
 
             // If the row has been recycled, reapply the BackgroundBrush
             if (row.IsRecycled)
@@ -445,9 +446,9 @@ namespace Avalonia.Controls
         {
             // Use an empty clip instead of IsVisible=false. Changing IsVisible invalidates
             // the element's measure (forcing a full re-measure when re-inserted), while
-            // changing Clip only invalidates rendering. LoadRowVisualsForDisplay already
-            // calls ClearValue(ClipProperty) when re-inserting, clearing this clip.
-            element.Clip = _recycledElementClip;
+            // changing Clip only invalidates rendering. <see cref="RestoreRecycledElement"/>
+            // clears this clip when the container goes back on screen.
+            element.Clip = _recycledElementClip ??= new RectangleGeometry();
 
             if (RecycledContainerHidingMode == DataGridRecycleHidingMode.MoveOffscreen)
             {
@@ -467,6 +468,25 @@ namespace Avalonia.Controls
                 row.ClearPointerOverState();
             }
         }
+
+        /// <summary>
+        /// Undoes <see cref="HideRecycledElement"/>. Every path that puts a recycled container back
+        /// on screen must go through here, otherwise the hiding clip stays applied and the container
+        /// renders as a blank gap.
+        /// </summary>
+        internal static void RestoreRecycledElement(Control element)
+        {
+            element.ClearValue(Visual.ClipProperty);
+        }
+
+        /// <summary>
+        /// True when <paramref name="element"/> is a recycled container that is currently hidden.
+        /// Code asking "is this container live on screen?" must use this rather than IsVisible:
+        /// <see cref="HideRecycledElement"/> hides via an empty clip and leaves IsVisible alone.
+        /// </summary>
+        internal static bool IsRecycledElementHidden(Visual element)
+            => element.Clip is RectangleGeometry { Rect.Width: <= 0 }
+               || element.Clip is RectangleGeometry { Rect.Height: <= 0 };
 
     }
 }

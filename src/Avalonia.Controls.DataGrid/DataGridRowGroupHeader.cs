@@ -460,7 +460,7 @@ internal
         internal void LoadVisualsForDisplay()
         {
             // Restore visibility for group headers that were hidden during recycling
-            ClearValue(Visual.IsVisibleProperty);
+            DataGrid.RestoreRecycledElement(this);
             
             EnsureExpanderButtonIsChecked();
             EnsureHeaderVisibility();

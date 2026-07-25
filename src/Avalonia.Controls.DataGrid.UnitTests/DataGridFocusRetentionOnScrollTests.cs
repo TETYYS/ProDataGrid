@@ -67,7 +67,7 @@ public class DataGridFocusRetentionOnScrollTests
     {
         return grid.GetSelfAndVisualDescendants()
             .OfType<DataGridRow>()
-            .Where(r => r.IsVisible)
+            .Where(RecycledContainer.IsShown)
             .ToList();
     }
 

@@ -36,7 +36,7 @@ namespace Avalonia.Controls
             }
 
             var runtimeState = grid.CaptureState(sections, stateOptions);
-            return DataGridStatePersistenceMapper.ToPersisted(runtimeState, grid.ColumnDefinitionsSource.AsReadOnly(), stateOptions, persistenceOptions);
+            return DataGridStatePersistenceMapper.ToPersisted(runtimeState, grid.ColumnDefinitionsSource?.AsReadOnly(), stateOptions, persistenceOptions);
         }
 
         /// <summary>
@@ -59,7 +59,7 @@ namespace Avalonia.Controls
                 throw new ArgumentNullException(nameof(state));
             }
 
-            var runtimeState = DataGridStatePersistenceMapper.ToRuntime(state, sections, grid.ColumnDefinitionsSource.AsReadOnly(), stateOptions, persistenceOptions);
+            var runtimeState = DataGridStatePersistenceMapper.ToRuntime(state, sections, grid.ColumnDefinitionsSource?.AsReadOnly(), stateOptions, persistenceOptions);
             grid.RestoreState(runtimeState, runtimeState.Sections, stateOptions);
         }
 

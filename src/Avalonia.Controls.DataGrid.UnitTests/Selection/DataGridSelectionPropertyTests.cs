@@ -42,7 +42,7 @@ public class DataGridSelectionPropertyTests
         Assert.All(rows.Where(r => !Equals(r.DataContext, "B")), r => Assert.False(r.IsSelected));
 
         Assert.Same(grid.Selection, selectionModel);
-        Assert.Same(grid.Selection.Source, grid.CollectionView);
+        SelectionSource.AssertTracksView(grid, grid.Selection);
     }
 
     [AvaloniaFact]
@@ -71,7 +71,7 @@ public class DataGridSelectionPropertyTests
         grid.Selection = selectionModel;
         grid.UpdateLayout();
 
-        Assert.Same(grid.CollectionView, selectionModel.Source);
+        SelectionSource.AssertTracksView(grid, selectionModel);
         Assert.Equal(1, selectionModel.SelectedIndex);
         Assert.Equal(items[1], selectionModel.SelectedItem);
         Assert.Equal(items[1], grid.SelectedItem);
@@ -95,12 +95,12 @@ public class DataGridSelectionPropertyTests
         grid.Selection = selectionModel;
         grid.UpdateLayout();
 
-        Assert.Same(grid.CollectionView, selectionModel.Source);
+        SelectionSource.AssertTracksView(grid, selectionModel);
 
         grid.ItemsSource = items2;
         grid.UpdateLayout();
 
-        Assert.Same(grid.CollectionView, selectionModel.Source);
+        SelectionSource.AssertTracksView(grid, selectionModel);
         Assert.Equal(-1, selectionModel.SelectedIndex);
         Assert.Null(selectionModel.SelectedItem);
     }
@@ -611,19 +611,19 @@ public class DataGridSelectionPropertyTests
         Dispatcher.UIThread.RunJobs();
 
         Assert.Same(selectionModel, grid.Selection);
-        Assert.Same(grid.CollectionView, selectionModel.Source);
+        var source = SelectionSource.AssertTracksView(grid, selectionModel);
 
         window.Content = null;
         Dispatcher.UIThread.RunJobs();
 
         Dispatcher.UIThread.RunJobs();
-        Assert.Same(grid.CollectionView, selectionModel.Source);
+        Assert.Same(source, SelectionSource.AssertTracksView(grid, selectionModel));
 
         window.Content = grid;
         Dispatcher.UIThread.RunJobs();
         grid.UpdateLayout();
 
-        Assert.Same(grid.CollectionView, selectionModel.Source);
+        Assert.Same(source, SelectionSource.AssertTracksView(grid, selectionModel));
 
         window.Close();
     }
@@ -654,7 +654,7 @@ public class DataGridSelectionPropertyTests
         grid.UpdateLayout();
         Dispatcher.UIThread.RunJobs();
 
-        Assert.Same(grid.CollectionView, selectionModel.Source);
+        var source = SelectionSource.AssertTracksView(grid, selectionModel);
 
         window.Content = null;
         window.Content = grid;
@@ -662,7 +662,7 @@ public class DataGridSelectionPropertyTests
         Dispatcher.UIThread.RunJobs();
         grid.UpdateLayout();
 
-        Assert.Same(grid.CollectionView, selectionModel.Source);
+        Assert.Same(source, SelectionSource.AssertTracksView(grid, selectionModel));
 
         window.Close();
     }

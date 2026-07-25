@@ -5,6 +5,8 @@ namespace Avalonia.Controls
 {
     /// <summary>
     /// Controls how recycled containers are hidden when removed from the viewport.
+    /// Both modes hide the container with an empty clip - which, unlike IsVisible, does not
+    /// invalidate measure - and differ only in what happens to its arranged bounds.
     /// </summary>
     #if !DATAGRID_INTERNAL
     public
@@ -14,13 +16,14 @@ namespace Avalonia.Controls
     enum DataGridRecycleHidingMode
     {
         /// <summary>
-        /// Move recycled containers far offscreen to avoid stale layout bounds (default).
+        /// Also arrange recycled containers far offscreen, so layout-sensitive logic cannot pick up
+        /// stale bounds (default).
         /// </summary>
         MoveOffscreen = 0,
 
         /// <summary>
-        /// Only set IsVisible to false, leaving the last arranged bounds intact.
+        /// Leave the last arranged bounds intact.
         /// </summary>
-        SetIsVisibleOnly = 1
+        KeepLastBounds = 1
     }
 }

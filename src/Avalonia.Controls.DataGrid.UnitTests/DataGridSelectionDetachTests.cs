@@ -81,7 +81,7 @@ public class DataGridSelectionDetachTests
                 window.UpdateLayout();
                 grid.UpdateLayout();
 
-                Assert.Same(grid.CollectionView, selectionModel.Source);
+                SelectionSource.AssertTracksView(grid, selectionModel);
 
                 selectionModel.Select(0);
                 selectionModel.Select(1);
@@ -170,7 +170,7 @@ public class DataGridSelectionDetachTests
                 window.UpdateLayout();
                 grid.UpdateLayout();
 
-                Assert.Same(grid.CollectionView, selectionModel.Source);
+                SelectionSource.AssertTracksView(grid, selectionModel);
 
                 selectionModel.Select(0);
                 selectionModel.Select(1);
@@ -194,7 +194,7 @@ public class DataGridSelectionDetachTests
         }
 
         Assert.Null(exception);
-        Assert.Same(grid.CollectionView, selectionModel.Source);
+        SelectionSource.AssertTracksView(grid, selectionModel);
     }
 
     private sealed class SelectionItem

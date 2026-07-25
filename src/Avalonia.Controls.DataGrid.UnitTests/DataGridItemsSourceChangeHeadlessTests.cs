@@ -183,7 +183,7 @@ public class DataGridItemsSourceChangeHeadlessTests
         grid.Selection = selectionModel;
         PumpLayout(grid);
 
-        Assert.Same(grid.CollectionView, selectionModel.Source);
+        SelectionSource.AssertTracksView(grid, selectionModel);
 
         if (selectionModel.Source is IList list && list.Count > 0)
         {
@@ -194,7 +194,7 @@ public class DataGridItemsSourceChangeHeadlessTests
         grid.ItemsSource = flatItems;
         PumpLayout(grid);
 
-        Assert.Same(grid.CollectionView, selectionModel.Source);
+        SelectionSource.AssertTracksView(grid, selectionModel);
         Assert.Equal(0, selectionModel.SelectedIndex);
         Assert.Same(flatItems[0], selectionModel.SelectedItem);
         Assert.Same(flatItems[0], grid.SelectedItem);

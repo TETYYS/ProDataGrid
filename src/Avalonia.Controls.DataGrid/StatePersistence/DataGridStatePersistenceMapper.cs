@@ -433,7 +433,7 @@ namespace Avalonia.Controls
                         continue;
                     }
 
-                    var columnDefinition = columnDefinitions.FirstOrDefault(x => object.Equals(x.ColumnKey, columnId.Value));
+                    var columnDefinition = columnDefinitions?.FirstOrDefault(x => object.Equals(x.ColumnKey, columnId.Value));
 
                     string comparerToken = null;
                     if (descriptor.Comparer != null
@@ -505,7 +505,7 @@ namespace Avalonia.Controls
                         }
                     }
 
-                    var columnDefinition = columnDefinitions.FirstOrDefault(x => object.Equals(x.ColumnKey, columnId));
+                    var columnDefinition = columnDefinitions?.FirstOrDefault(x => object.Equals(x.ColumnKey, columnId));
 
                     if (!TryParseCulture(descriptor.CultureName, $"Sorting.Descriptors[{i}].CultureName", context, out var culture))
                     {

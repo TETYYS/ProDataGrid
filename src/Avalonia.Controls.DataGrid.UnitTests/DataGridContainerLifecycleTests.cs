@@ -107,7 +107,7 @@ public class DataGridContainerLifecycleTests
         PumpLayout(grid);
 
         Assert.Null(row.DataContext);
-        Assert.False(row.IsVisible);
+        Assert.True(RecycledContainer.IsHidden(row));
 
         window.Close();
     }

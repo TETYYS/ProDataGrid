@@ -596,7 +596,7 @@ internal
             var presenterPoint = this.TranslatePoint(point, _rowsPresenter) ?? point;
             var rows = DisplayData.GetScrollingRows()
                 .OfType<DataGridRow>()
-                .Where(r => r.IsVisible)
+                .Where(r => !IsRecycledElementHidden(r))
                 .OrderBy(r => r.Bounds.Top)
                 .ToList();
 

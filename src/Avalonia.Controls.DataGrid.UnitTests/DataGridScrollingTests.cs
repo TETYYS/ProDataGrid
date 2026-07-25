@@ -782,7 +782,7 @@ public class DataGridScrollingTests
         Assert.NotEmpty(recycledRows);
 
         Assert.All(recycledRows, recycled => Assert.Contains(recycled, presenter.Children));
-        Assert.All(recycledRows, recycled => Assert.False(recycled.IsVisible));
+        Assert.All(recycledRows, recycled => Assert.True(RecycledContainer.IsHidden(recycled)));
     }
 
     [AvaloniaFact]
@@ -807,7 +807,7 @@ public class DataGridScrollingTests
 
         Assert.NotEmpty(recycledRows);
         Assert.All(recycledRows, recycled => Assert.DoesNotContain(recycled, presenter.Children));
-        Assert.All(recycledRows, recycled => Assert.False(recycled.IsVisible));
+        Assert.All(recycledRows, recycled => Assert.True(RecycledContainer.IsHidden(recycled)));
     }
 
     [AvaloniaFact]
@@ -854,15 +854,17 @@ public class DataGridScrollingTests
         var recycleRow = typeof(DataGridDisplayData).GetMethod("RecycleRow", BindingFlags.Instance | BindingFlags.NonPublic);
         recycleRow!.Invoke(target.DisplayData, new object[] { row });
 
-        Assert.False(row.IsVisible);
+        Assert.True(RecycledContainer.IsHidden(row));
+        Assert.NotEqual(before, row.Bounds);
+        Assert.True(row.Bounds.Right < 0 && row.Bounds.Bottom < 0, $"Expected offscreen bounds, got {row.Bounds}");
     }
 
     [AvaloniaFact]
-    public void HidingMode_SetIsVisibleOnly_Keeps_Last_Bounds()
+    public void HidingMode_KeepLastBounds_Keeps_Last_Bounds()
     {
         // Arrange
         var target = CreateTarget(Enumerable.Range(0, 20).Select(x => new ScrollTestModel($"Item {x}")).ToList(), height: 200);
-        target.RecycledContainerHidingMode = DataGridRecycleHidingMode.SetIsVisibleOnly;
+        target.RecycledContainerHidingMode = DataGridRecycleHidingMode.KeepLastBounds;
         target.KeepRecycledContainersInVisualTree = true;
         target.TrimRecycledContainers = false;
         target.UpdateLayout();
@@ -3237,14 +3239,14 @@ public class DataGridScrollingTests
         // Get all visible rows from visual tree
         var visibleRows = target.GetSelfAndVisualDescendants()
             .OfType<DataGridRow>()
-            .Where(r => r.IsVisible)
+            .Where(RecycledContainer.IsShown)
             .ToList();
-        
+
         var visibleHeaders = target.GetSelfAndVisualDescendants()
             .OfType<DataGridRowGroupHeader>()
-            .Where(h => h.IsVisible)
+            .Where(RecycledContainer.IsShown)
             .ToList();
-        
+
         // All visible elements should have slots within the DisplayData range
         foreach (var row in visibleRows)
         {

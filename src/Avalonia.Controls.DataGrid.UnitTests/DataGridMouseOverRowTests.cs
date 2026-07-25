@@ -213,7 +213,7 @@ public class DataGridMouseOverRowTests
             model,
             height: 84,
             hideHeaders: true,
-            recycledHidingMode: DataGridRecycleHidingMode.SetIsVisibleOnly,
+            recycledHidingMode: DataGridRecycleHidingMode.KeepLastBounds,
             rowHeight: 24);
         try
         {

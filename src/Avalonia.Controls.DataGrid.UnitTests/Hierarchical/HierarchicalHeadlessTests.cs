@@ -1822,7 +1822,7 @@ public class HierarchicalHeadlessTests
         var displayElements = new HashSet<Control>(grid.DisplayData.GetScrollingElements());
         foreach (var row in grid.GetSelfAndVisualDescendants().OfType<DataGridRow>())
         {
-            if (row.IsVisible)
+            if (RecycledContainer.IsShown(row))
             {
                 Assert.True(displayElements.Contains(row));
             }
@@ -1884,7 +1884,7 @@ public class HierarchicalHeadlessTests
     {
         return grid.GetSelfAndVisualDescendants()
             .OfType<DataGridRow>()
-            .Where(row => row.IsVisible)
+            .Where(RecycledContainer.IsShown)
             .ToList();
     }
 

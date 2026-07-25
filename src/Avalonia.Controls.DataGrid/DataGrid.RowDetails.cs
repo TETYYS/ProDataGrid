@@ -125,7 +125,7 @@ internal
                 bool updated = false;
                 foreach (DataGridRow row in GetAllRows())
                 {
-                    if (row.IsVisible)
+                    if (!IsRecycledElementHidden(row))
                     {
                         if (newDetailsMode == DataGridRowDetailsVisibilityMode.VisibleWhenSelected)
                         {

@@ -289,7 +289,7 @@ public class DataGridLogicalScrollableDetachTests
                 mainWindow.UpdateLayout();
                 grid.UpdateLayout();
 
-                Assert.Same(grid.CollectionView, selectionModel.Source);
+                SelectionSource.AssertTracksView(grid, selectionModel);
 
                 selectionModel.SelectionChanged += selectionChanged;
 
@@ -414,7 +414,7 @@ public class DataGridLogicalScrollableDetachTests
                 mainWindow.UpdateLayout();
                 grid.UpdateLayout();
 
-                Assert.Same(grid.CollectionView, selectionModel.Source);
+                SelectionSource.AssertTracksView(grid, selectionModel);
 
                 selectionModel.SelectionChanged += selectionChanged;
 

@@ -150,7 +150,7 @@ namespace Avalonia.Controls
         internal void ApplyState(bool? isSelectedOverride = null)
         {
             var owner = OwningGrid;
-            if (RootElement != null && owner != null && IsVisible)
+            if (RootElement != null && owner != null && !DataGrid.IsRecycledElementHidden(this))
             {
                 var isSelected = isSelectedOverride ?? (Slot != -1 && owner.GetRowSelection(Slot));
                 var previousSuppress = owner.PushRowSelectionUpdateSuppression();

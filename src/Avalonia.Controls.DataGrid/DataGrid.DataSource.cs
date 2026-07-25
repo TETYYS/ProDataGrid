@@ -78,61 +78,74 @@ internal
                     CancelEdit(DataGridEditingUnit.Row, false);
                 }
 
-                DataConnection.UnWireEvents(DataConnection.DataSource);
-                DataConnection.ClearDataProperties();
-                ClearRowGroupHeadersTable();
-
-                // The old selected indexes are no longer relevant. There's a perf benefit from
-                // updating the selected indexes with a null DataSource, because we know that all
-                // of the previously selected indexes have been removed from selection
-                DataConnection.DataSource = null;
-                _selectedItems.UpdateIndexes();
-                CoerceSelectedItem();
-
-                // Wrap an IEnumerable in an ICollectionView if it's not already one
-                bool setDefaultSelection = false;
-                if (newItemsSource is IDataGridCollectionView newCollectionView)
+                // The grid's own selection is deliberately emptied below and only rebuilt after the
+                // model has been re-sourced, so nothing in between may push it into the selection
+                // model - adapter re-applies re-enter FlushSelectionChanged, which would otherwise
+                // clear the very selection we are about to remap onto the new view.
+                var swapSelectionSync = PushSelectionSync();
+                bool setDefaultSelection;
+                try
                 {
-                    setDefaultSelection = true;
-                }
-                else
-                {
-                    newCollectionView =  newItemsSource is not null
-                        ? DataGridDataConnection.CreateView(newItemsSource)
-                        : default;
-                }
+                    DataConnection.UnWireEvents(DataConnection.DataSource);
+                    DataConnection.ClearDataProperties();
+                    ClearRowGroupHeadersTable();
 
-                DataConnection.DataSource = newCollectionView;
+                    // The old selected indexes are no longer relevant. There's a perf benefit from
+                    // updating the selected indexes with a null DataSource, because we know that all
+                    // of the previously selected indexes have been removed from selection
+                    DataConnection.DataSource = null;
+                    _selectedItems.UpdateIndexes();
+                    CoerceSelectedItem();
 
-                if (oldCollectionView != DataConnection.CollectionView)
-                {
-                    RaisePropertyChanged(CollectionViewProperty, 
-                        oldCollectionView, 
-                        newCollectionView);
-                }
-
-                UpdateSortingAdapterView();
-                UpdateFilteringAdapterView();
-                UpdateSearchAdapterView();
-                UpdateConditionalFormattingAdapterView();
-
-                if (DataConnection.DataSource != null)
-                {
-                    // Setup the column headers
-                    if (DataConnection.DataType != null)
+                    // Wrap an IEnumerable in an ICollectionView if it's not already one
+                    setDefaultSelection = false;
+                    if (newItemsSource is IDataGridCollectionView newCollectionView)
                     {
-                        foreach (var column in ColumnsInternal.GetDisplayedColumns())
+                        setDefaultSelection = true;
+                    }
+                    else
+                    {
+                        newCollectionView =  newItemsSource is not null
+                            ? DataGridDataConnection.CreateView(newItemsSource)
+                            : default;
+                    }
+
+                    DataConnection.DataSource = newCollectionView;
+
+                    if (oldCollectionView != DataConnection.CollectionView)
+                    {
+                        RaisePropertyChanged(CollectionViewProperty,
+                            oldCollectionView,
+                            newCollectionView);
+                    }
+
+                    UpdateSortingAdapterView();
+                    UpdateFilteringAdapterView();
+                    UpdateSearchAdapterView();
+                    UpdateConditionalFormattingAdapterView();
+
+                    if (DataConnection.DataSource != null)
+                    {
+                        // Setup the column headers
+                        if (DataConnection.DataType != null)
                         {
-                            if (column is DataGridBoundColumn boundColumn)
+                            foreach (var column in ColumnsInternal.GetDisplayedColumns())
                             {
-                                boundColumn.SetHeaderFromBinding();
+                                if (column is DataGridBoundColumn boundColumn)
+                                {
+                                    boundColumn.SetHeaderFromBinding();
+                                }
                             }
                         }
+                        DataConnection.WireEvents(DataConnection.DataSource);
                     }
-                    DataConnection.WireEvents(DataConnection.DataSource);
-                }
 
-                UpdateSelectionModelSource();
+                    UpdateSelectionModelSource();
+                }
+                finally
+                {
+                    PopSelectionSync(swapSelectionSync);
+                }
 
                 var modelSelectionPending = _selectionModelAdapter?.Model != null &&
                     (_selectionModelAdapter.Model.SelectedIndex >= 0 ||
@@ -202,7 +215,7 @@ internal
         {
             if (_selectionModelAdapter != null)
             {
-                _syncingSelectionModel = true;
+                var previousSelectionSync = PushSelectionSync();
                 try
                 {
                     var view = DataConnection?.CollectionView;
@@ -250,7 +263,7 @@ internal
                 }
                 finally
                 {
-                    _syncingSelectionModel = false;
+                    PopSelectionSync(previousSelectionSync);
                 }
             }
         }

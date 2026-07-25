@@ -1399,7 +1399,7 @@ internal
             var presenterPoint = this.TranslatePoint(point, _rowsPresenter) ?? point;
             foreach (var element in DisplayData.GetScrollingRows())
             {
-                if (!element.IsVisible)
+                if (IsRecycledElementHidden(element))
                 {
                     continue;
                 }
@@ -1461,7 +1461,7 @@ internal
             double maxY = double.NegativeInfinity;
             foreach (var row in DisplayData.GetScrollingRows())
             {
-                if (!row.IsVisible)
+                if (IsRecycledElementHidden(row))
                 {
                     continue;
                 }
@@ -1519,7 +1519,7 @@ internal
             {
                 row = hit.GetSelfAndVisualAncestors()
                     .OfType<DataGridRow>()
-                    .FirstOrDefault(r => r.OwningGrid == this && r.IsVisible);
+                    .FirstOrDefault(r => r.OwningGrid == this && !IsRecycledElementHidden(r));
 
                 if (row != null)
                 {
@@ -1537,7 +1537,7 @@ internal
                 var presenterPoint = this.TranslatePoint(point, _rowsPresenter) ?? point;
                 foreach (var candidate in _rowsPresenter.Children.OfType<DataGridRow>())
                 {
-                    if (!candidate.IsVisible)
+                    if (IsRecycledElementHidden(candidate))
                     {
                         continue;
                     }

@@ -52,7 +52,7 @@ internal
                 if (focusedRow != null && focusedRow.OwningGrid == this && _focusedRow != focusedRow)
                 {
                     ResetFocusedRow();
-                    _focusedRow = focusedRow.IsVisible ? focusedRow : null;
+                    _focusedRow = IsRecycledElementHidden(focusedRow) ? null : focusedRow;
                     break;
                 }
                 focusedElement = focusedElement.GetVisualParent();

@@ -84,15 +84,15 @@ namespace Avalonia.Controls.DataGridSelection
             switch (e.Action)
             {
                 case NotifyCollectionChangedAction.Add:
-                    AddItems(e.NewItems);
+                    AddItems(e.NewItems, e.NewStartingIndex);
                     break;
 
                 case NotifyCollectionChangedAction.Remove:
-                    RemoveItems(e.OldItems);
+                    RemoveItems(e.OldItems, e.OldStartingIndex);
                     break;
 
                 case NotifyCollectionChangedAction.Replace:
-                    ReplaceItems(e.OldItems, e.NewItems);
+                    ReplaceItems(e.OldItems, e.NewItems, e.OldStartingIndex);
                     break;
 
                 case NotifyCollectionChangedAction.Reset:
@@ -100,57 +100,69 @@ namespace Avalonia.Controls.DataGridSelection
                     break;
 
                 case NotifyCollectionChangedAction.Move:
-                    // Keep selection indexed by item identity. Avalonia's SelectionModel handles
-                    // Move as remove/add, which reports a false deselection for moved items.
+                    // Keep selection indexed by item identity: this projection deliberately does not
+                    // follow moves. Avalonia's SelectionModel turns a move into remove+add, which
+                    // reports the moved item as deselected and can expand the selection. Because the
+                    // model and the grid both resolve through this same projection, indexes stay
+                    // consistent with each other even though they no longer match the view's order.
                     return;
             }
         }
 
-        private void AddItems(IList items)
+        private void AddItems(IList items, int startingIndex)
         {
             if (items == null || items.Count == 0)
             {
                 return;
             }
 
-            foreach (object item in items)
+            for (var i = 0; i < items.Count; i++)
             {
-                var index = _items.Count;
-                _indexMap[item] = index;
-                _items.Add(item);
+                var item = items[i];
+                var index = startingIndex < 0 ? _items.Count : Math.Min(startingIndex + i, _items.Count);
+                _items.Insert(index, item);
+                // Re-index items that shifted up from the insertion point.
+                for (var j = index; j < _items.Count; j++)
+                    _indexMap[_items[j]] = j;
                 CollectionChanged?.Invoke(
                     this,
                     new NotifyCollectionChangedEventArgs(NotifyCollectionChangedAction.Add, item, index));
             }
         }
 
-        private void RemoveItems(IList items)
+        private void RemoveItems(IList items, int startingIndex)
         {
             if (items == null || items.Count == 0)
             {
                 return;
             }
 
-            foreach (object item in items)
+            // Walk backwards so startingIndex stays valid for the items still to be removed.
+            for (var i = items.Count - 1; i >= 0; i--)
             {
-                if (!_indexMap.TryGetValue(item, out var index))
+                var item = items[i];
+                var index = startingIndex < 0 ? -1 : startingIndex + i;
+                if (index < 0 || index >= _items.Count || !ReferenceEquals(_items[index], item))
                 {
-                    continue;
+                    if (!_indexMap.TryGetValue(item, out index))
+                    {
+                        continue;
+                    }
                 }
 
-                _indexMap.Remove(item);
                 var removed = _items[index];
                 _items.RemoveAt(index);
+                _indexMap.Remove(removed);
                 // Re-index items that shifted down after the removal point.
-                for (var i = index; i < _items.Count; i++)
-                    _indexMap[_items[i]] = i;
+                for (var j = index; j < _items.Count; j++)
+                    _indexMap[_items[j]] = j;
                 CollectionChanged?.Invoke(
                     this,
                     new NotifyCollectionChangedEventArgs(NotifyCollectionChangedAction.Remove, removed, index));
             }
         }
 
-        private void ReplaceItems(IList oldItems, IList newItems)
+        private void ReplaceItems(IList oldItems, IList newItems, int startingIndex)
         {
             if (oldItems == null || newItems == null || oldItems.Count != newItems.Count)
             {
@@ -160,10 +172,14 @@ namespace Avalonia.Controls.DataGridSelection
 
             for (var i = 0; i < oldItems.Count; i++)
             {
-                if (!_indexMap.TryGetValue(oldItems[i], out var index))
+                var index = startingIndex < 0 ? -1 : startingIndex + i;
+                if (index < 0 || index >= _items.Count || !ReferenceEquals(_items[index], oldItems[i]))
                 {
-                    AddItems(new[] { newItems[i] });
-                    continue;
+                    if (!_indexMap.TryGetValue(oldItems[i], out index))
+                    {
+                        AddItems(new[] { newItems[i] }, startingIndex < 0 ? -1 : startingIndex + i);
+                        continue;
+                    }
                 }
 
                 _indexMap.Remove(oldItems[i]);
