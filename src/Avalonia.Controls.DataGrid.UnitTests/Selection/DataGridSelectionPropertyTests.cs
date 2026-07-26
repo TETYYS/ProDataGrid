@@ -11,6 +11,7 @@ using System.Linq;
 using System.Reflection;
 using Avalonia.Controls;
 using Avalonia.Collections;
+using Avalonia.Controls.DataGridSelection;
 using Avalonia.Controls.Selection;
 using Avalonia.Data;
 using Avalonia.Headless.XUnit;
@@ -27,8 +28,8 @@ public class DataGridSelectionPropertyTests
     public void Custom_SelectionModel_Applies_Selection_To_Grid()
     {
         var items = new ObservableCollection<string> { "A", "B", "C" };
-        var selectionModel = new SelectionModel<string> { SingleSelect = false };
-        selectionModel.Select(1); // preselect before wiring
+        var selectionModel = new DataGridSelectionModel<string> { SingleSelect = false };
+        selectionModel.Select("B"); // preselect before wiring
 
         var grid = CreateGrid(items);
         grid.Selection = selectionModel;
@@ -48,7 +49,7 @@ public class DataGridSelectionPropertyTests
     [AvaloniaFact]
     public void OneTime_Selection_Binding_Updates_After_DataContext_Assigned()
     {
-        var selectionModel = new SelectionModel<string> { SingleSelect = true };
+        var selectionModel = new DataGridSelectionModel<string> { SingleSelect = true };
         var grid = new DataGrid();
 
         grid.Bind(DataGrid.SelectionProperty, new Binding("Selection") { Mode = BindingMode.OneTime });
@@ -58,15 +59,17 @@ public class DataGridSelectionPropertyTests
     }
 
     [AvaloniaFact]
-    public void Selection_Model_With_Mismatched_Source_Is_Retargeted()
+    public void Selection_Made_Before_Attaching_Resolves_Against_The_View()
     {
         var items = new ObservableCollection<string> { "A", "B", "C" };
         var grid = CreateGrid(items);
 
-        // Source is the raw collection, not the view wrapped by the grid.
-        var selectionModel = new SelectionModel<object> { Source = items };
+        // Nothing here says which collection the selection belongs to. The model holds items, so
+        // there is no source for it to be pointed at the wrong collection through - what used to
+        // need retargeting is now simply not expressible.
+        var selectionModel = new DataGridSelectionModel<object>();
 
-        selectionModel.Select(1);
+        selectionModel.Select(items[1]);
 
         grid.Selection = selectionModel;
         grid.UpdateLayout();
@@ -76,7 +79,7 @@ public class DataGridSelectionPropertyTests
         Assert.Equal(items[1], selectionModel.SelectedItem);
         Assert.Equal(items[1], grid.SelectedItem);
 
-        selectionModel.Select(2);
+        selectionModel.Select(items[2]);
         grid.UpdateLayout();
 
         Assert.Equal(new[] { 1, 2 }, selectionModel.SelectedIndexes.OrderBy(x => x));
@@ -89,7 +92,7 @@ public class DataGridSelectionPropertyTests
     {
         var items1 = new ObservableCollection<string> { "A", "B" };
         var items2 = new ObservableCollection<string> { "X", "Y" };
-        var selectionModel = new SelectionModel<string> { SingleSelect = false };
+        var selectionModel = new DataGridSelectionModel<string> { SingleSelect = false };
 
         var grid = CreateGrid(items1);
         grid.Selection = selectionModel;
@@ -229,7 +232,7 @@ public class DataGridSelectionPropertyTests
         SelectionChangedEventArgs? args = null;
         grid.SelectionChanged += (_, e) => args = e;
 
-        grid.Selection = new SelectionModel<object>();
+        grid.Selection = new DataGridSelectionModel<object>();
         grid.UpdateLayout();
 
         Assert.NotNull(args);
@@ -242,8 +245,8 @@ public class DataGridSelectionPropertyTests
     public void SelectionModel_Shifts_On_Insert_Before_Selected_Item()
     {
         var items = new ObservableCollection<string> { "A", "B", "C" };
-        var selectionModel = new SelectionModel<string> { SingleSelect = false };
-        selectionModel.Select(1); // select "B" before source to verify deferred selection
+        var selectionModel = new DataGridSelectionModel<string> { SingleSelect = false };
+        selectionModel.Select("B"); // select before attaching, to verify the selection carries over
 
         var grid = CreateGrid(items);
         grid.Selection = selectionModel;
@@ -265,7 +268,7 @@ public class DataGridSelectionPropertyTests
     public void SelectionModel_Reflects_Grid_Selection_Changes()
     {
         var items = new ObservableCollection<string> { "A", "B", "C" };
-        var selectionModel = new SelectionModel<string> { SingleSelect = false };
+        var selectionModel = new DataGridSelectionModel<string> { SingleSelect = false };
 
         var grid = CreateGrid(items);
         grid.Selection = selectionModel;
@@ -277,7 +280,7 @@ public class DataGridSelectionPropertyTests
         Assert.Equal(2, selectionModel.SelectedIndex);
 
         selectionModel.Clear();
-        selectionModel.Select(0);
+        selectionModel.SelectAt(0);
         grid.UpdateLayout();
 
         Assert.Equal(items[0], grid.SelectedItem);
@@ -295,12 +298,12 @@ public class DataGridSelectionPropertyTests
         };
 
         var view = new DataGridCollectionView(items);
-        var selectionModel = new SelectionModel<Item> { SingleSelect = false };
+        var selectionModel = new DataGridSelectionModel<Item> { SingleSelect = false };
 
         var grid = CreateGrid(view, selectionModel);
         grid.UpdateLayout();
 
-        selectionModel.Select(1); // select "Alpha" after binding
+        selectionModel.SelectAt(1); // select "Alpha" after binding
         grid.UpdateLayout();
 
         ApplySort(view, nameof(Item.Name), ListSortDirection.Ascending);
@@ -364,8 +367,11 @@ public class DataGridSelectionPropertyTests
         };
 
         grid.Selection.SingleSelect = false;
-        grid.Selection.Select(0);
-        grid.Selection.Select(2);
+
+        // By item, not by index: with no items source there is no view yet, so an index names
+        // nothing. The items themselves are all the model ever needed.
+        grid.Selection.Select("A");
+        grid.Selection.Select("C");
 
         root.Content = grid;
         root.Show();
@@ -488,8 +494,8 @@ public class DataGridSelectionPropertyTests
         grid.Selection.SelectionChanged += (_, e) =>
         {
             log.Add(
-                $"add:{string.Join(",", e.SelectedIndexes)} remove:{string.Join(",", e.DeselectedIndexes)}");
-            if (e.DeselectedIndexes.Count > 0)
+                $"add:{string.Join(",", e.SelectedItems)} remove:{string.Join(",", e.DeselectedItems)}");
+            if (e.DeselectedItems.Count > 0)
             {
                 var frames = new System.Diagnostics.StackTrace(skipFrames: 0, fNeedFileInfo: true)
                     .GetFrames()?
@@ -506,11 +512,9 @@ public class DataGridSelectionPropertyTests
         Assert.Equal(new[] { 5, 6, 7 }, grid.Selection.SelectedIndexes.OrderBy(x => x));
 
         var model = grid.Selection;
-        var sourceBeforeScroll = model.Source;
 
         grid.ScrollIntoView(items[150], grid.Columns[0]);
         grid.UpdateLayout();
-        Assert.Same(sourceBeforeScroll, model.Source);
         var afterScroll = model.SelectedIndexes.OrderBy(x => x).ToArray();
         Assert.True(afterScroll.SequenceEqual(new[] { 5, 6, 7 }),
             $"Selection after scroll: [{string.Join(",", afterScroll)}]; log: {string.Join(" | ", log)}");
@@ -588,7 +592,7 @@ public class DataGridSelectionPropertyTests
     public void ExternalSelectionModel_Source_Persists_On_Detach_And_Attach()
     {
         var items = new ObservableCollection<string> { "A", "B", "C" };
-        var selectionModel = new SelectionModel<string> { SingleSelect = false };
+        var selectionModel = new DataGridSelectionModel<string> { SingleSelect = false };
 
         var window = new Window
         {
@@ -611,28 +615,30 @@ public class DataGridSelectionPropertyTests
         Dispatcher.UIThread.RunJobs();
 
         Assert.Same(selectionModel, grid.Selection);
-        var source = SelectionSource.AssertTracksView(grid, selectionModel);
+        selectionModel.Select("B");
+        SelectionSource.AssertTracksView(grid, selectionModel);
 
         window.Content = null;
         Dispatcher.UIThread.RunJobs();
 
         Dispatcher.UIThread.RunJobs();
-        Assert.Same(source, SelectionSource.AssertTracksView(grid, selectionModel));
+        SelectionSource.AssertTracksView(grid, selectionModel);
 
         window.Content = grid;
         Dispatcher.UIThread.RunJobs();
         grid.UpdateLayout();
 
-        Assert.Same(source, SelectionSource.AssertTracksView(grid, selectionModel));
+        SelectionSource.AssertTracksView(grid, selectionModel);
+        Assert.Equal("B", selectionModel.SelectedItem);
 
         window.Close();
     }
 
     [AvaloniaFact]
-    public void ExternalSelectionModel_Source_Remains_Stable_When_Reattached()
+    public void ExternalSelectionModel_Keeps_Tracking_The_View_When_Reattached()
     {
         var items = new ObservableCollection<string> { "A", "B", "C" };
-        var selectionModel = new SelectionModel<string> { SingleSelect = false };
+        var selectionModel = new DataGridSelectionModel<string> { SingleSelect = false };
 
         var window = new Window
         {
@@ -654,7 +660,8 @@ public class DataGridSelectionPropertyTests
         grid.UpdateLayout();
         Dispatcher.UIThread.RunJobs();
 
-        var source = SelectionSource.AssertTracksView(grid, selectionModel);
+        selectionModel.Select("C");
+        SelectionSource.AssertTracksView(grid, selectionModel);
 
         window.Content = null;
         window.Content = grid;
@@ -662,7 +669,8 @@ public class DataGridSelectionPropertyTests
         Dispatcher.UIThread.RunJobs();
         grid.UpdateLayout();
 
-        Assert.Same(source, SelectionSource.AssertTracksView(grid, selectionModel));
+        SelectionSource.AssertTracksView(grid, selectionModel);
+        Assert.Equal("C", selectionModel.SelectedItem);
 
         window.Close();
     }
@@ -734,7 +742,7 @@ public class DataGridSelectionPropertyTests
         public int Value { get; }
     }
 
-    private static DataGrid CreateGrid(IEnumerable items, SelectionModel<Item> selection)
+    private static DataGrid CreateGrid(IEnumerable items, DataGridSelectionModel<Item> selection)
     {
         var root = new Window
         {

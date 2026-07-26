@@ -8,6 +8,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Presenters;
 using Avalonia.Controls.Primitives;
+using Avalonia.Controls.DataGridSelection;
 using Avalonia.Controls.Selection;
 using Avalonia.Controls.Templates;
 using Avalonia.Data;
@@ -210,7 +211,7 @@ public class DataGridLogicalScrollableDetachTests
                 Value = i
             }));
 
-        var selectionModel = new SelectionModel<object?>();
+        var selectionModel = new DataGridSelectionModel<object?>();
 
         var grid = new DataGrid
         {
@@ -268,7 +269,7 @@ public class DataGridLogicalScrollableDetachTests
         };
 
         var reparented = false;
-        EventHandler<SelectionModelSelectionChangedEventArgs> selectionChanged = (_, __) =>
+        EventHandler<DataGridSelectionModelChangedEventArgs<object?>> selectionChanged = (_, __) =>
         {
             if (reparented)
                 return;
@@ -293,9 +294,9 @@ public class DataGridLogicalScrollableDetachTests
 
                 selectionModel.SelectionChanged += selectionChanged;
 
-                selectionModel.Select(0);
-                selectionModel.Select(1);
-                selectionModel.Select(2);
+                selectionModel.SelectAt(0);
+                selectionModel.SelectAt(1);
+                selectionModel.SelectAt(2);
 
                 Dispatcher.UIThread.RunJobs();
                 mainWindow.UpdateLayout();
@@ -327,7 +328,7 @@ public class DataGridLogicalScrollableDetachTests
                 Value = i
             }));
 
-        var selectionModel = new SelectionModel<object?>();
+        var selectionModel = new DataGridSelectionModel<object?>();
 
         var grid = new DataGrid
         {
@@ -388,7 +389,7 @@ public class DataGridLogicalScrollableDetachTests
         toolWindow.SetThemeStyles(DataGridTheme.SimpleV2);
 
         var reparented = false;
-        EventHandler<SelectionModelSelectionChangedEventArgs> selectionChanged = (_, __) =>
+        EventHandler<DataGridSelectionModelChangedEventArgs<object?>> selectionChanged = (_, __) =>
         {
             if (reparented)
                 return;
@@ -418,9 +419,9 @@ public class DataGridLogicalScrollableDetachTests
 
                 selectionModel.SelectionChanged += selectionChanged;
 
-                selectionModel.Select(0);
-                selectionModel.Select(1);
-                selectionModel.Select(2);
+                selectionModel.SelectAt(0);
+                selectionModel.SelectAt(1);
+                selectionModel.SelectAt(2);
 
                 Dispatcher.UIThread.RunJobs();
                 Dispatcher.UIThread.RunJobs();

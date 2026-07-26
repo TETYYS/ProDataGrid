@@ -4,10 +4,11 @@
 // All other rights reserved.
 
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 using System.Diagnostics;
-using Avalonia.Controls.Selection;
+using Avalonia.Controls.DataGridSelection;
 
 namespace Avalonia.Controls
 {
@@ -16,7 +17,7 @@ namespace Avalonia.Controls
     #else
     internal
     #endif
-    partial class DataGrid
+    partial class DataGrid : IDataGridSelectionOwner
     {
 
         private void SelectDisplayedElement(int slot, bool? isSelectedOverride = null)
@@ -37,75 +38,114 @@ namespace Avalonia.Controls
             }
         }
 
-
-
-        private void SelectSlot(int slot, bool isSelected)
+        /// <summary>
+        /// Resolves the data item a slot displays. Group header and footer slots carry no data item.
+        /// </summary>
+        /// <remarks>
+        /// Projected, so that hierarchical rows put the caller's item into the selection rather than the
+        /// node wrapping it. The selection view projects the same way, and the two have to agree: the
+        /// model looks items up by identity, so a node stored where an item is expected simply never
+        /// matches.
+        /// </remarks>
+        internal bool TryGetItemForSlot(int slot, out object item)
         {
-            _selectedItems.SelectSlot(slot, isSelected);
-            if (IsSlotVisible(slot))
+            item = null;
+            if (slot < 0 || DataConnection == null || IsGroupSlot(slot))
             {
-                SelectDisplayedElement(slot, isSelected);
+                return false;
+            }
+
+            int rowIndex = RowIndexFromSlot(slot);
+            if (rowIndex < 0 || rowIndex >= DataConnection.Count)
+            {
+                return false;
+            }
+
+            item = ProjectSelectionItem(DataConnection.GetDataItem(rowIndex));
+            return item != null;
+        }
+
+        /// <summary>
+        /// Resolves the slot currently displaying <paramref name="item"/>, or -1 when it is not shown.
+        /// </summary>
+        internal int SlotForItem(object item)
+        {
+            if (item == null)
+            {
+                return -1;
+            }
+
+            return TryGetRowIndexFromItem(item, out var rowIndex) ? SlotFromRowIndex(rowIndex) : -1;
+        }
+
+        /// <summary>
+        /// The slots of the selected items, in ascending order.
+        /// </summary>
+        /// <remarks>
+        /// Derived on demand from the selected items rather than tracked alongside them, which is why
+        /// nothing has to be re-indexed when rows move: selection order follows view order, so slots
+        /// come out ascending without sorting.
+        /// </remarks>
+        internal IEnumerable<int> GetSelectedSlots()
+        {
+            foreach (var item in _selectionModel.SelectedItems)
+            {
+                var slot = SlotForItem(item);
+                if (slot >= 0)
+                {
+                    yield return slot;
+                }
             }
         }
 
+        internal int GetSelectedSlotCount(int lowerBound, int upperBound)
+        {
+            var count = 0;
+            foreach (var slot in GetSelectedSlots())
+            {
+                if (slot >= lowerBound && slot <= upperBound)
+                {
+                    count++;
+                }
+            }
 
+            return count;
+        }
+
+        private bool AreAllSlotsSelected(int startSlot, int endSlot)
+        {
+            if (startSlot > endSlot)
+            {
+                return true;
+            }
+
+            for (int slot = startSlot; slot <= endSlot; slot++)
+            {
+                if (!IsGroupSlot(slot) && !GetRowSelection(slot))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
 
         private void SelectSlots(int startSlot, int endSlot, bool isSelected)
         {
-            _selectedItems.SelectSlots(startSlot, endSlot, isSelected);
-
-            if (_selectionModelAdapter != null && !_syncingSelectionModel && DataConnection?.CollectionView != null)
+            using (_selectionModel.BatchUpdate())
             {
-                _syncingSelectionModel = true;
-                try
+                for (int slot = startSlot; slot <= endSlot; slot++)
                 {
-                    for (int slot = startSlot; slot <= endSlot; slot++)
+                    if (TryGetItemForSlot(slot, out var item))
                     {
-                        int rowIndex = RowIndexFromSlot(slot);
-                        if (rowIndex >= 0)
-                        {
-                            var selectionIndex = GetSelectionIndexFromRowIndex(rowIndex);
-                            if (isSelected)
-                            {
-                                if (selectionIndex >= 0)
-                                {
-                                    _selectionModelAdapter.Select(selectionIndex);
-                                }
-                            }
-                            else
-                            {
-                                if (selectionIndex >= 0)
-                                {
-                                    _selectionModelAdapter.Deselect(selectionIndex);
-                                }
-                            }
-                        }
+                        _selectionModel.SetSelected(item, isSelected);
                     }
-                }
-                finally
-                {
-                    _syncingSelectionModel = false;
-                }
-            }
-
-            // Apply the correct row state for display rows and also expand or collapse detail accordingly
-            int firstSlot = Math.Max(DisplayData.FirstScrollingSlot, startSlot);
-            int lastSlot = Math.Min(DisplayData.LastScrollingSlot, endSlot);
-
-            for (int slot = firstSlot; slot <= lastSlot; slot++)
-            {
-                if (IsSlotVisible(slot))
-                {
-                    SelectDisplayedElement(slot, isSelected);
                 }
             }
         }
 
-
-
         /// <summary>
-        /// Clears the entire selection. Displayed rows are deselected explicitly to visualize
-        /// potential transition effects
+        /// Clears the entire selection.
         /// </summary>
         internal void ClearRowSelection(bool resetAnchorSlot)
         {
@@ -114,173 +154,37 @@ namespace Avalonia.Controls
                 AnchorSlot = -1;
             }
 
-            // Capture the displayed rows that are currently painted as selected before the
-            // selection is cleared. We key off the row's visual state (IsSelected) rather
-            // than the live selection model: when selection is driven by a bound
-            // SelectionModel the model is often already cleared by the time we get here, so
-            // querying it would find nothing while the rows are still painted as selected.
-            // Re-applying state on exactly these rows afterwards reflects the deselection
-            // immediately (without it the rows stay highlighted until the next pointer-over
-            // refresh) and without touching unrelated rows.
-            List<DataGridRow>? previouslySelectedRows = null;
-            if (DisplayData != null)
-            {
-                for (int slot = DisplayData.FirstScrollingSlot;
-                slot > -1 && slot <= DisplayData.LastScrollingSlot;
-                slot++)
-                {
-                    if (DisplayData.GetDisplayedElement(slot) is DataGridRow row && row.IsSelected)
-                    {
-                        (previouslySelectedRows ??= new List<DataGridRow>()).Add(row);
-                    }
-                }
-            }
-
-            ClearSelectionModelForRowSelection(null);
-
-            if (_selectedItems.Count > 0)
-            {
-                _noSelectionChangeCount++;
-                try
-                {
-                    // Individually deselecting displayed rows to view potential transitions
-                    for (int slot = DisplayData.FirstScrollingSlot;
-                    slot > -1 && slot <= DisplayData.LastScrollingSlot;
-                    slot++)
-                    {
-                        if (DisplayData.GetDisplayedElement(slot) is DataGridRow row)
-                        {
-                            if (_selectedItems.ContainsSlot(row.Slot))
-                            {
-                                SelectSlot(row.Slot, false);
-                            }
-                        }
-                    }
-                    _selectedItems.ClearRows();
-                    SelectionHasChanged = true;
-                }
-                finally
-                {
-                    NoSelectionChangeCount--;
-                }
-            }
-
-            if (previouslySelectedRows != null)
-            {
-                foreach (var row in previouslySelectedRows)
-                {
-                    row.ApplyState();
-                    row.ApplyCellsState();
-                }
-            }
-        }
-
-        private bool ClearSelectionModelForRowSelection(int? slotException)
-        {
-            if (_selectionModelAdapter == null || _syncingSelectionModel)
-            {
-                return false;
-            }
-
-            var model = _selectionModelAdapter.Model;
-            var selectionIndex = slotException.HasValue ? SelectionIndexFromSlot(slotException.Value) : -1;
-            var hasSelection = model.SelectedIndexes is { Count: > 0 } || model.SelectedIndex >= 0;
-            if (!hasSelection && selectionIndex < 0)
-            {
-                return false;
-            }
-
-            var previousSync = _syncingSelectionModel;
-            _syncingSelectionModel = true;
+            _noSelectionChangeCount++;
             try
             {
-                using (model.BatchUpdate())
-                {
-                    _selectionModelAdapter.Clear();
-                    if (selectionIndex >= 0)
-                    {
-                        _selectionModelAdapter.Select(selectionIndex);
-                    }
-                }
+                _selectionModel.Clear();
             }
             finally
             {
-                _syncingSelectionModel = previousSync;
+                NoSelectionChangeCount--;
             }
-
-            UpdateSelectionSnapshot();
-            return true;
         }
-
-
 
         internal int GetCollapsedSlotCount(int startSlot, int endSlot)
         {
             return _collapsedSlotsTable.GetIndexCount(startSlot, endSlot);
         }
 
-
-
         internal bool GetRowSelection(int slot)
         {
-            if (slot < 0)
-            {
-                return false;
-            }
-
-            if (IsSlotPlaceholderRow(slot))
-            {
-                return _selectedItems.ContainsSlot(slot);
-            }
-
-            if (_selectionModelAdapter != null && DataConnection?.CollectionView != null)
-            {
-                int rowIndex = RowIndexFromSlot(slot);
-                if (rowIndex >= 0)
-                {
-                    var selectionIndex = GetSelectionIndexFromRowIndex(rowIndex);
-                    return selectionIndex >= 0 && _selectionModelAdapter.IsSelected(selectionIndex);
-                }
-            }
-
-            return _selectedItems.ContainsSlot(slot);
+            return TryGetItemForSlot(slot, out var item) && _selectionModel.IsSelected(item);
         }
 
         internal bool GetRowSelectionFromRowIndex(int rowIndex)
         {
-            if (rowIndex < 0)
+            if (rowIndex < 0 || DataConnection == null || rowIndex >= DataConnection.Count)
             {
                 return false;
             }
 
-            if (DataConnection != null)
-            {
-                int slot = SlotFromRowIndex(rowIndex);
-                if (slot >= 0 && IsSlotPlaceholderRow(slot))
-                {
-                    return _selectedItems.ContainsSlot(slot);
-                }
-            }
-
-            if (_selectionModelAdapter != null)
-            {
-                var selectionIndex = GetSelectionIndexFromRowIndex(rowIndex);
-                return selectionIndex >= 0 && _selectionModelAdapter.IsSelected(selectionIndex);
-            }
-
-            if (DataConnection != null)
-            {
-                int slot = SlotFromRowIndex(rowIndex);
-                if (slot >= 0)
-                {
-                    return _selectedItems.ContainsSlot(slot);
-                }
-            }
-
-            return false;
+            var item = ProjectSelectionItem(DataConnection.GetDataItem(rowIndex));
+            return item != null && _selectionModel.IsSelected(item);
         }
-
-
 
         internal void SetRowSelection(int slot, bool isSelected, bool setAnchorSlot)
         {
@@ -294,58 +198,23 @@ namespace Avalonia.Controls
             {
                 return;
             }
+
             _noSelectionChangeCount++;
             try
             {
-                if (SelectionMode == DataGridSelectionMode.Single && isSelected)
+                if (TryGetItemForSlot(slot, out var item))
                 {
-                    Debug.Assert(_selectedItems.Count <= 1);
-                    if (_selectedItems.Count > 0)
+                    if (isSelected && SelectionMode == DataGridSelectionMode.Single)
                     {
-                        int currentlySelectedSlot = _selectedItems.GetIndexes().First();
-                        if (currentlySelectedSlot != slot)
-                        {
-                            SelectSlot(currentlySelectedSlot, false);
-                            SelectionHasChanged = true;
-                        }
+                        // Replacing rather than adding keeps the swap to a single reported change.
+                        _selectionModel.SetSelectedItems(new[] { item });
+                    }
+                    else
+                    {
+                        _selectionModel.SetSelected(item, isSelected);
                     }
                 }
-                if (_selectedItems.ContainsSlot(slot) != isSelected)
-                {
-                    SelectSlot(slot, isSelected);
-                    SelectionHasChanged = true;
 
-                    if (_selectionModelAdapter != null && !_syncingSelectionModel && DataConnection?.CollectionView != null)
-                    {
-                        _syncingSelectionModel = true;
-                        try
-                        {
-                            int rowIndex = RowIndexFromSlot(slot);
-                            if (rowIndex >= 0)
-                            {
-                                var selectionIndex = GetSelectionIndexFromRowIndex(rowIndex);
-                                if (isSelected)
-                                {
-                                    if (selectionIndex >= 0)
-                                    {
-                                        _selectionModelAdapter.Select(selectionIndex);
-                                    }
-                                }
-                                else
-                                {
-                                    if (selectionIndex >= 0)
-                                    {
-                                        _selectionModelAdapter.Deselect(selectionIndex);
-                                    }
-                                }
-                            }
-                        }
-                        finally
-                        {
-                            _syncingSelectionModel = false;
-                        }
-                    }
-                }
                 if (setAnchorSlot)
                 {
                     AnchorSlot = slot;
@@ -355,6 +224,23 @@ namespace Avalonia.Controls
             {
                 NoSelectionChangeCount--;
             }
+        }
+
+        /// <summary>
+        /// Deselects items that were removed from the data.
+        /// </summary>
+        /// <remarks>
+        /// Called only from the Remove notification, never from the row-removal bookkeeping: a row also
+        /// leaves its slot when it is repositioned, and by then the two are indistinguishable.
+        /// </remarks>
+        internal void DeselectRemovedItems(System.Collections.IList removedItems)
+        {
+            if (removedItems == null || removedItems.Count == 0 || _selectionModel is not { Count: > 0 })
+            {
+                return;
+            }
+
+            _selectionModel.RemoveItems(removedItems);
         }
 
         internal bool PushRowSelectionUpdateSuppression()
@@ -369,6 +255,117 @@ namespace Avalonia.Controls
             _suppressSelectionUpdatesFromRows = previous;
         }
 
+        // ---- selection model owner -------------------------------------------------------------
 
+        /// <summary>
+        /// The model's single notification point into the grid.
+        /// </summary>
+        /// <remarks>
+        /// Called synchronously mid-mutation, before consumers see the change, for every selection
+        /// change regardless of origin - a click, a keyboard range, or consumer code calling
+        /// <c>Selection.Select</c>. That is what removes the need for a flag distinguishing the two
+        /// directions: there is only one direction.
+        /// </remarks>
+        void IDataGridSelectionOwner.OnSelectionModelChanged(DataGridSelectionModelChangedEventArgs e)
+        {
+            // Every selection change reaches the grid through here, so this is where the change is
+            // marked as having come from the model. The source is a flag set, so a more specific
+            // origin already in scope - a click, a keyboard range - is kept alongside it.
+            using var _ = BeginSelectionChangeScope(DataGridSelectionChangeSource.SelectionModelSync);
+
+            SelectionHasChanged = true;
+
+            AccumulateSelectionChange(e);
+            ApplySelectionVisuals(e);
+            ApplySelectionChangeToBinding(e);
+
+            if (_noSelectionChangeCount == 0)
+            {
+                FlushSelectionChanged();
+            }
+        }
+
+        void IDataGridSelectionOwner.OnSelectionModelSingleSelectChanged(bool singleSelect)
+        {
+            // While the grid is detached, SelectionMode is whatever the consumer set last and the
+            // model does not get to overrule it. Attaching re-imposes the mode onto the model, never
+            // the other way round - see AttachSelectionModelHandlers.
+            if (_externalSubscriptionsDetached)
+            {
+                return;
+            }
+
+            var mode = singleSelect ? DataGridSelectionMode.Single : DataGridSelectionMode.Extended;
+            if (SelectionMode == mode)
+            {
+                return;
+            }
+
+            // No callback: OnSelectionModeChanged would push the value straight back into the model
+            // and clear the selection on the way through.
+            SetValueNoCallback(SelectionModeProperty, mode);
+        }
+
+        /// <summary>
+        /// Folds a model change into the pending delta for the grid's own SelectionChanged event, which
+        /// spans a whole grid operation rather than a single model call.
+        /// </summary>
+        private void AccumulateSelectionChange(DataGridSelectionModelChangedEventArgs e)
+        {
+            var comparer = _selectionModel.Comparer;
+
+            foreach (var item in e.SelectedItems)
+            {
+                if (!RemoveFirst(_pendingSelectionRemoved, item, comparer))
+                {
+                    _pendingSelectionAdded.Add(item);
+                }
+            }
+
+            foreach (var item in e.DeselectedItems)
+            {
+                if (!RemoveFirst(_pendingSelectionAdded, item, comparer))
+                {
+                    _pendingSelectionRemoved.Add(item);
+                }
+            }
+
+            static bool RemoveFirst(List<object> list, object item, IEqualityComparer<object> comparer)
+            {
+                for (int i = 0; i < list.Count; i++)
+                {
+                    if (comparer.Equals(list[i], item))
+                    {
+                        list.RemoveAt(i);
+                        return true;
+                    }
+                }
+
+                return false;
+            }
+        }
+
+        private void ApplySelectionVisuals(DataGridSelectionModelChangedEventArgs e)
+        {
+            if (DisplayData == null)
+            {
+                return;
+            }
+
+            Apply(e.DeselectedItems, isSelected: false);
+            Apply(e.SelectedItems, isSelected: true);
+
+            void Apply(IReadOnlyList<object> items, bool isSelected)
+            {
+                foreach (var item in items)
+                {
+                    var slot = SlotForItem(item);
+                    if (slot >= 0 && IsSlotVisible(slot))
+                    {
+                        SelectDisplayedElement(slot, isSelected);
+                    }
+                }
+            }
+        }
     }
 }

@@ -8,6 +8,7 @@ using System.Linq;
 using System.Reflection;
 using Avalonia.Collections;
 using Avalonia.Controls;
+using Avalonia.Controls.DataGridSelection;
 using Avalonia.Controls.Selection;
 using Avalonia.Data;
 using Avalonia.Headless.XUnit;
@@ -92,7 +93,7 @@ public class DataGridSelectionOriginTests
     public void SelectionModel_Select_Sets_SelectionModelSync_Source()
     {
         var items = new ObservableCollection<string> { "A", "B", "C" };
-        var selection = new SelectionModel<string> { SingleSelect = false };
+        var selection = new DataGridSelectionModel<string> { SingleSelect = false };
 
         var grid = CreateGrid(items, selection);
         grid.UpdateLayout();
@@ -100,7 +101,7 @@ public class DataGridSelectionOriginTests
         DataGridSelectionChangedEventArgs? args = null;
         grid.SelectionChanged += (_, e) => args = e as DataGridSelectionChangedEventArgs;
 
-        selection.Select(1);
+        selection.SelectAt(1);
         grid.UpdateLayout();
 
         Assert.NotNull(args);
@@ -193,7 +194,7 @@ public class DataGridSelectionOriginTests
         method?.Invoke(grid, new object[] { grid, args });
     }
 
-    private static DataGrid CreateGrid(IEnumerable items, SelectionModel<string> selection)
+    private static DataGrid CreateGrid(IEnumerable items, DataGridSelectionModel<string> selection)
     {
         var root = new Window
         {

@@ -25,8 +25,8 @@ public class DataGridStateSelectionTests
         {
             var nameColumn = grid.ColumnsInternal[1];
 
-            grid.Selection.Select(1);
-            grid.Selection.Select(4);
+            grid.Selection.SelectAt(1);
+            grid.Selection.SelectAt(4);
             grid.SelectedCells.Clear();
             grid.SelectedCells.Add(new DataGridCellInfo(items[2], nameColumn, 2, nameColumn.Index, true));
             var currentSlot = grid.SlotFromRowIndex(1);
@@ -69,7 +69,7 @@ public class DataGridStateSelectionTests
 
         try
         {
-            grid.Selection.Select(2);
+            grid.Selection.SelectAt(2);
 
             var state = grid.CaptureSelectionState(StateTestHelper.CreateKeyedOptions(grid, items));
 
@@ -105,7 +105,7 @@ public class DataGridStateSelectionTests
         {
             var nameColumn = grid.ColumnsInternal[1];
 
-            grid.Selection.Select(0);
+            grid.Selection.SelectAt(0);
             var bound = new ObservableCollection<DataGridCellInfo>();
             grid.SelectedCells = bound;
             bound.Add(new DataGridCellInfo(items[2], nameColumn, 2, nameColumn.Index, true));
@@ -149,8 +149,8 @@ public class DataGridStateSelectionTests
         {
             var nameColumn = grid.ColumnsInternal[1];
 
-            grid.Selection.Select(1);
-            grid.Selection.Select(3);
+            grid.Selection.SelectAt(1);
+            grid.Selection.SelectAt(3);
 
             var currentSlot = grid.SlotFromRowIndex(1);
             grid.UpdateSelectionAndCurrency(nameColumn.Index, currentSlot, DataGridSelectionAction.None, scrollIntoView: false);
@@ -196,7 +196,7 @@ public class DataGridStateSelectionTests
 
             var nameColumn = grid.ColumnsInternal[1];
 
-            grid.Selection.Select(1);
+            grid.Selection.SelectAt(1);
             bound.Add(new DataGridCellInfo(items[2], nameColumn, 2, nameColumn.Index, true));
             grid.UpdateLayout();
 

@@ -1211,8 +1211,8 @@ internal
         /// Gets or sets the selection model that drives row selection. If not provided, a default
         /// selection model is created.
         /// </summary>
-        public static readonly DirectProperty<DataGrid, ISelectionModel> SelectionProperty =
-            AvaloniaProperty.RegisterDirect<DataGrid, ISelectionModel>(
+        public static readonly DirectProperty<DataGrid, DataGridSelection.DataGridSelectionModel> SelectionProperty =
+            AvaloniaProperty.RegisterDirect<DataGrid, DataGridSelection.DataGridSelectionModel>(
                 nameof(Selection),
                 o => o.Selection,
                 (o, v) => o.Selection = v,

@@ -161,14 +161,8 @@ namespace Avalonia.Controls
             }
 
             _showDetailsTable.InsertIndex(slotInserted);
-            // Update the slot ranges for the RowGroupHeaders before updating the _selectedItems table,
-            // because it's dependent on the slots being correct with regards to grouping.
             RowGroupHeadersTable.InsertIndex(slotInserted);
             RowGroupFootersTable.InsertIndex(slotInserted);
-            if (_selectionModelAdapter == null)
-            {
-                _selectedItems.InsertIndex(slotInserted);
-            }
 
             if (isCollapsed)
             {

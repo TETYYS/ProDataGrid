@@ -55,8 +55,8 @@ public class DataGridStateFullTests
             Dispatcher.UIThread.RunJobs();
             grid.SearchModel.MoveTo(0);
 
-            grid.Selection.Select(2);
-            grid.Selection.Select(3);
+            grid.Selection.SelectAt(2);
+            grid.Selection.SelectAt(3);
 
             grid.ScrollIntoView(items[20], nameColumn);
             grid.UpdateLayout();

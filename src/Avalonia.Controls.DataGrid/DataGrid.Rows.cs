@@ -432,57 +432,25 @@ internal
         /// </summary>
         internal void ClearRowSelection(int slotException, bool setAnchorSlot)
         {
-            ClearSelectionModelForRowSelection(slotException);
             _noSelectionChangeCount++;
             try
             {
-                bool exceptionAlreadySelected = false;
-                if (_selectedItems.Count > 0)
+                if (TryGetItemForSlot(slotException, out var keep))
                 {
-                    // Individually deselecting displayed rows to view potential transitions
-                    for (int slot = DisplayData.FirstScrollingSlot;
-                         slot > -1 && slot <= DisplayData.LastScrollingSlot;
-                         slot++)
-                    {
-                        if (slot != slotException && _selectedItems.ContainsSlot(slot))
-                        {
-                            SelectSlot(slot, false);
-                            SelectionHasChanged = true;
-                        }
-                    }
-                    exceptionAlreadySelected = _selectedItems.ContainsSlot(slotException);
-                    int selectedCount = _selectedItems.Count;
-                    if (selectedCount > 0)
-                    {
-                        if (selectedCount > 1)
-                        {
-                            SelectionHasChanged = true;
-                        }
-                        else
-                        {
-                            int currentlySelectedSlot = _selectedItems.GetIndexes().First();
-                            if (currentlySelectedSlot != slotException)
-                            {
-                                SelectionHasChanged = true;
-                            }
-                        }
-                        _selectedItems.ClearRows();
-                    }
-                }
-                if (exceptionAlreadySelected)
-                {
-                    // Exception row was already selected. It just needs to be marked as selected again.
-                    // No transition involved.
-                    _selectedItems.SelectSlot(slotException, true /*select*/);
-                    if (setAnchorSlot)
-                    {
-                        AnchorSlot = slotException;
-                    }
+                    // One atomic replacement. Previously this walked the displayed rows deselecting
+                    // them, then cleared the grid's own set, then separately reconciled the selection
+                    // model; the single store makes all of that one call, and the row visuals follow
+                    // from the change it reports.
+                    _selectionModel.SetSelectedItems(new[] { keep });
                 }
                 else
                 {
-                    // Exception row was not selected. It needs to be selected with potential transition
-                    SetRowSelection(slotException, true /*isSelected*/, setAnchorSlot);
+                    _selectionModel.Clear();
+                }
+
+                if (setAnchorSlot)
+                {
+                    AnchorSlot = slotException;
                 }
             }
             finally
@@ -561,6 +529,181 @@ internal
             RequestPointerOverRefresh();
         }
 
+        /// <summary>
+        /// Repositions a block of rows. Nothing is created and nothing is destroyed.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// This used to be applied as a removal followed by an insertion, which is a different
+        /// operation that merely ends in the same arrangement. It destroyed the row's slot and made
+        /// a new one, so the current cell was reset, the row's details state was dropped, its
+        /// container was recycled and Unloading/Loading were raised for a row that never left the
+        /// grid. Selection was the visible casualty - the removal took the moved item out of it -
+        /// but everything else keyed by slot was churned the same way.
+        /// </para>
+        /// <para>
+        /// <see cref="SlotCount"/> and the realized window are left alone, because a move changes
+        /// neither. All that changes is which item the slots between the old and the new position
+        /// resolve to. Selection takes no part in this at all: it is held by item, so a move is
+        /// invisible to it.
+        /// </para>
+        /// </remarks>
+        /// <param name="oldIndex">Row index the block currently starts at.</param>
+        /// <param name="newIndex">Row index the block ends up starting at.</param>
+        /// <param name="count">Number of rows in the block.</param>
+        internal void MoveRows(int oldIndex, int newIndex, int count)
+        {
+            Debug.Assert(
+                DataConnection?.CollectionView is not IDataGridCollectionView { IsGrouping: true },
+                "Grouped rows are repositioned through the group notifications.");
+
+            if (count <= 0 || oldIndex == newIndex || DataConnection == null)
+            {
+                return;
+            }
+
+            // Rows and slots coincide here: group headers are the only thing that separates them.
+            int lo = Math.Min(oldIndex, newIndex);
+            int hi = Math.Max(oldIndex, newIndex) + count - 1;
+            if (lo < 0 || hi >= SlotCount)
+            {
+                // The span does not fit the rows the grid currently believes it has, so there is no
+                // permutation to apply. Rebuild rather than leave the two disagreeing.
+                InitializeElements(recycleRows: true);
+                return;
+            }
+
+            // Where a slot inside the span ends up. Outside the span nothing moves.
+            int MapSlot(int slot)
+            {
+                if (slot < lo || slot > hi)
+                {
+                    return slot;
+                }
+
+                if (newIndex > oldIndex)
+                {
+                    return slot < oldIndex + count ? slot + (newIndex - oldIndex) : slot - count;
+                }
+
+                return slot < oldIndex ? slot + count : slot - (oldIndex - newIndex);
+            }
+
+            // Details visibility is set per row, so the overrides travel with the rows.
+            if (_showDetailsTable.GetIndexCount(lo, hi) > 0)
+            {
+                var details = new (bool Present, bool Visible)[hi - lo + 1];
+                for (int slot = lo; slot <= hi; slot++)
+                {
+                    var visible = _showDetailsTable.GetValueAt(slot, out var present);
+                    details[MapSlot(slot) - lo] = (present, visible);
+                }
+
+                for (int i = 0; i < details.Length; i++)
+                {
+                    if (details[i].Present)
+                    {
+                        _showDetailsTable.AddValue(lo + i, details[i].Visible);
+                    }
+                    else
+                    {
+                        _showDetailsTable.RemoveValue(lo + i);
+                    }
+                }
+            }
+
+            // Rows kept alive outside the realized window take no part in the rotation below, so
+            // their slots are mapped directly. Done first, while they still say where they were.
+            foreach (DataGridRow dataGridRow in _loadedRows)
+            {
+                if (!IsSlotVisible(dataGridRow.Slot))
+                {
+                    MoveRowToSlot(dataGridRow, MapSlot(dataGridRow.Slot));
+                }
+            }
+
+            if (EditingRow != null && !IsSlotVisible(EditingRow.Slot))
+            {
+                MoveRowToSlot(EditingRow, MapSlot(EditingRow.Slot));
+            }
+
+            if (_focusedRow != null && _focusedRow != EditingRow && !IsSlotVisible(_focusedRow.Slot))
+            {
+                MoveRowToSlot(_focusedRow, MapSlot(_focusedRow.Slot));
+            }
+
+            // Currency and the selection anchor name a row rather than a position, so they follow it.
+            CurrentSlot = MapSlot(CurrentSlot);
+            AnchorSlot = MapSlot(AnchorSlot);
+
+            if (!TryMoveDisplayedRows(lo, hi, newIndex > oldIndex ? count : -count))
+            {
+                // The realized elements could not be reordered in place. Rebuilding them is heavy,
+                // but it is still not a removal: no row is reported as having left the grid.
+                InitializeElements(recycleRows: true);
+            }
+
+            RowHeightEstimator?.OnItemsMoved(oldIndex, newIndex, count);
+            RequestPointerOverRefresh();
+            InvalidateRowsArrange();
+        }
+
+        /// <summary>
+        /// Slides the realized rows over the span a moved block travelled.
+        /// </summary>
+        /// <returns>False when the elements could not be reordered in place.</returns>
+        private bool TryMoveDisplayedRows(int lo, int hi, int shift)
+        {
+            if (DisplayData.FirstScrollingSlot < 0)
+            {
+                return true;
+            }
+
+            int first = Math.Max(lo, DisplayData.FirstScrollingSlot);
+            int last = Math.Min(hi, DisplayData.LastScrollingSlot);
+            if (first > last)
+            {
+                // The block travelled entirely outside the realized window.
+                return true;
+            }
+
+            if (!DisplayData.RotateScrollingElements(first, last, shift))
+            {
+                return false;
+            }
+
+            // The elements are back in slot order, so each one takes the slot it landed on. Those
+            // that wrapped round the end of the span were showing a row that has left the window
+            // and now stand in for one that was never realized, so they rebind.
+            for (int slot = first; slot <= last; slot++)
+            {
+                if (DisplayData.GetDisplayedElement(slot) is not DataGridRow row)
+                {
+                    continue;
+                }
+
+                int rowIndex = RowIndexFromSlot(slot);
+                object item = DataConnection.GetDataItem(rowIndex);
+                if (ReferenceEquals(row.DataContext, item))
+                {
+                    MoveRowToSlot(row, slot);
+                    _rowsPresenter?.InvalidateChildIndex(row);
+                }
+                else
+                {
+                    RebindRow(row, rowIndex, slot, item);
+                }
+            }
+
+            return true;
+        }
+
+        private void MoveRowToSlot(DataGridRow row, int slot)
+        {
+            row.Slot = slot;
+            row.Index = RowIndexFromSlot(slot);
+        }
+
         internal bool TryReplacePlaceholderRow(int rowIndex, object newItem)
         {
             int slot = SlotFromRowIndex(rowIndex);
@@ -579,11 +722,19 @@ internal
                 return false;
             }
 
-            var previousItem = row.DataContext;
-            var wasPlaceholder = row.IsPlaceholder;
+            RebindRow(row, rowIndex, slot, newItem);
+            RequestPointerOverRefresh();
+            return true;
+        }
+
+        /// <summary>
+        /// Points an already realized row at a different item, keeping the container.
+        /// </summary>
+        private void RebindRow(DataGridRow row, int rowIndex, int slot, object newItem)
+        {
             var hasPlaceholderTransition =
-                !ReferenceEquals(previousItem, newItem) &&
-                (wasPlaceholder || ReferenceEquals(newItem, DataGridCollectionView.NewItemPlaceholder));
+                !ReferenceEquals(row.DataContext, newItem) &&
+                (row.IsPlaceholder || ReferenceEquals(newItem, DataGridCollectionView.NewItemPlaceholder));
 
             if (hasPlaceholderTransition)
             {
@@ -608,9 +759,9 @@ internal
             }
 
             row.ApplyState();
+            EnsureRowDetailsVisibility(row, raiseNotification: true, animate: false);
             row.InvalidateMeasure();
-            RequestPointerOverRefresh();
-            return true;
+            _rowsPresenter?.InvalidateChildIndex(row);
         }
 
         internal bool IsColumnDisplayed(int columnIndex)
@@ -960,7 +1111,7 @@ internal
             _noSelectionChangeCount++;
             try
             {
-                if (/*isSelected &&*/ !_selectedItems.ContainsAll(startSlot, endSlot))
+                if (/*isSelected &&*/ !AreAllSlotsSelected(startSlot, endSlot))
                 {
                     // At least one row gets selected
                     SelectSlots(startSlot, endSlot, true);
@@ -997,7 +1148,14 @@ internal
         {
             // Need to clean up recycled rows even if the RowCount is 0
             SetCurrentCellCore(-1, -1, commitEdit: false, endRowEdit: false);
-            ClearRowSelection(resetAnchorSlot: true);
+
+            // Deliberately does not clear the selection. This throws away containers and slots, which
+            // is a different thing from the items going away - a re-sort arrives here having changed
+            // nothing but the order. Losing the selection used to be papered over by snapshotting it
+            // before a reset and putting it back afterwards; deciding what an item-keyed selection
+            // should lose belongs with the change that knows what was actually removed, which is
+            // DeselectRemovedItems for a removal and DropSelectionForRemovedItems for a reset.
+            AnchorSlot = -1;
             UnloadElements(recycle);
 
             _showDetailsTable.Clear();
@@ -1444,10 +1602,6 @@ internal
                 RowGroupHeadersTable.RemoveIndexAndValue(slotDeleted);
                 RowGroupFootersTable.RemoveIndex(slotDeleted);
                 _collapsedSlotsTable.RemoveIndexAndValue(slotDeleted);
-                if (_selectionModelAdapter == null)
-                {
-                    _selectedItems.DeleteSlot(slotDeleted);
-                }
             }
             else if (IsGroupFooterSlot(slotDeleted))
             {
@@ -1455,22 +1609,13 @@ internal
                 RowGroupFootersTable.RemoveIndexAndValue(slotDeleted);
                 RowGroupHeadersTable.RemoveIndex(slotDeleted);
                 _collapsedSlotsTable.RemoveIndexAndValue(slotDeleted);
-                if (_selectionModelAdapter == null)
-                {
-                    _selectedItems.DeleteSlot(slotDeleted);
-                }
             }
             else
             {
-                // Update the ranges of selected rows
-                if (_selectedItems.ContainsSlot(slotDeleted))
-                {
-                    SelectionHasChanged = true;
-                }
-                if (_selectionModelAdapter == null)
-                {
-                    _selectedItems.Delete(slotDeleted, itemDeleted);
-                }
+                // Deliberately does not touch the selection. A row leaves its slot both when its item
+                // is removed from the data and when it is merely repositioned - the grid implements a
+                // Move as a remove followed by an insert - and from here the two are indistinguishable.
+                // Deselection is decided in DataGridDataConnection, where the kind of change is known.
                 RowGroupHeadersTable.RemoveIndex(slotDeleted);
                 RowGroupFootersTable.RemoveIndex(slotDeleted);
                 _collapsedSlotsTable.RemoveIndex(slotDeleted);

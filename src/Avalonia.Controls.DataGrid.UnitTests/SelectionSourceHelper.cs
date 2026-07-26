@@ -1,23 +1,33 @@
-using System.Collections;
 using System.Linq;
-using Avalonia.Controls.Selection;
+using Avalonia.Collections;
+using Avalonia.Controls;
+using Avalonia.Controls.DataGridSelection;
 using Xunit;
 
 namespace Avalonia.Controls.DataGridTests;
 
 /// <summary>
-/// The grid does not hand its CollectionView to the selection model directly; it retargets the model
-/// onto an internal projection of that view (DataGridSelectionSource) so collection moves survive as
-/// moves instead of being reported to the model as remove/add deselections. Tests therefore assert
-/// that the source tracks the view rather than that it is the view.
+/// The selection model no longer holds a source collection to compare against - it stores items and
+/// derives indexes from the grid's view on demand. What used to be checked by comparing
+/// <c>Selection.Source</c> to the view is now checked by asserting that the indexes the model reports
+/// are the positions those items actually occupy.
 /// </summary>
 internal static class SelectionSource
 {
-    /// <summary>Asserts the model's source projects <paramref name="grid"/>'s view, and returns it.</summary>
-    public static IEnumerable AssertTracksView(DataGrid grid, ISelectionModel selection)
+    public static void AssertTracksView(DataGrid grid, DataGridSelectionModel selection)
     {
-        Assert.NotNull(selection.Source);
-        Assert.Equal(grid.CollectionView.Cast<object>(), selection.Source!.Cast<object>());
-        return selection.Source;
+        var view = grid.CollectionView.Cast<object>().ToList();
+
+        foreach (var item in selection.SelectedItems)
+        {
+            Assert.Equal(view.IndexOf(item), IndexOfInModel(selection, item));
+        }
+
+        Assert.Equal(
+            selection.SelectedItems.Where(view.Contains).Select(item => view.IndexOf(item)).OrderBy(i => i),
+            selection.SelectedIndexes);
     }
+
+    private static int IndexOfInModel(DataGridSelectionModel selection, object item)
+        => selection.View?.IndexOf(item) ?? -1;
 }

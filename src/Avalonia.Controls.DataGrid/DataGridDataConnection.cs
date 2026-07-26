@@ -1,4 +1,4 @@
-﻿// (c) Copyright Microsoft Corporation.
+// (c) Copyright Microsoft Corporation.
 // This source is subject to the Microsoft Public License (Ms-PL).
 // Please see http://go.microsoft.com/fwlink/?LinkID=131993 for details.
 // All other rights reserved.
@@ -1174,9 +1174,6 @@ namespace Avalonia.Controls
                 return;
             }
 
-            bool updateSnapshotAfterChange = e.Action == NotifyCollectionChangedAction.Reset;
-            var snapshotSuppression = _owner.BeginSelectionSnapshotSuppression();
-            try
             {
                 using var _ = _owner.BeginSelectionChangeScope(DataGridSelectionChangeSource.ItemsSourceChange);
 
@@ -1184,27 +1181,6 @@ namespace Avalonia.Controls
                 {
                     throw DataGridError.DataGrid.CannotChangeItemsWhenLoadingRows();
                 }
-
-                List<object> selectionSnapshot = _owner.CaptureSelectionSnapshot();
-                if (_owner.HierarchicalRowsEnabled && _owner.HierarchicalModel != null)
-                {
-                    _owner.CacheHierarchicalSelectionSnapshot(selectionSnapshot);
-                    _owner.CacheHierarchicalSelectionIndexes(_owner.Selection?.SelectedIndexes);
-                }
-                if (e.Action == NotifyCollectionChangedAction.Reset)
-                {
-                    var previousSelectionSync = _owner.PushSelectionSync();
-                    try
-                    {
-                        _owner.ClearInvalidSelectionIndexes();
-                    }
-                    finally
-                    {
-                        _owner.PopSelectionSync(previousSelectionSync);
-                    }
-                }
-                bool restoreSyncingSelectionModel = false;
-                bool previousSyncingSelectionModel = false;
 
                 switch (e.Action)
                 {
@@ -1275,36 +1251,24 @@ namespace Avalonia.Controls
                                 _owner.RemoveRowAt(e.OldStartingIndex, item);
                             }
                         }
+
+                        // The items really are gone, unlike the remove half of a Move, so this is the
+                        // one collection change that deselects.
+                        _owner.DeselectRemovedItems(e.OldItems);
                         break;
                     case NotifyCollectionChangedAction.Move:
-                        if (!IsGrouping && e.OldItems != null && e.NewItems != null)
+                        // A move is a move: the rows change position and none is added or removed.
+                        // Taking one out and putting an equivalent one back would end in the same
+                        // arrangement, but it would report the moved rows as having left the grid.
+                        if (!IsGrouping && e.OldItems != null && e.OldStartingIndex >= 0 && e.NewStartingIndex >= 0)
                         {
-                            Debug.Assert(e.OldItems.Count == e.NewItems.Count);
-
-                            for (int i = 0; i < e.OldItems.Count; i++)
-                            {
-                                var oldIndex = e.OldStartingIndex + i;
-                                var newIndex = e.NewStartingIndex + i;
-
-                                if (oldIndex == newIndex)
-                                {
-                                    continue;
-                                }
-
-                                var item = e.OldItems[i];
-                                _owner.RemoveRowAt(oldIndex, item);
-
-                                _owner.InsertRowAt(newIndex);
-                            }
+                            _owner.MoveRows(e.OldStartingIndex, e.NewStartingIndex, e.OldItems.Count);
                         }
                         break;
                     case NotifyCollectionChangedAction.Replace:
                         throw new NotSupportedException(); // 
 
                     case NotifyCollectionChangedAction.Reset:
-                        previousSyncingSelectionModel = _owner.PushSelectionSync();
-                        restoreSyncingSelectionModel = true;
-
                         // Did the data type change during the reset?  If not, we can recycle
                         // the existing rows instead of having to clear them all.  We still need to clear our cached
                         // values for DataType and DataProperties, though, because the collection has been reset.
@@ -1322,9 +1286,13 @@ namespace Avalonia.Controls
                         break;
                 }
 
-                if (selectionSnapshot != null && e.Action == NotifyCollectionChangedAction.Reset)
+                if (e.Action == NotifyCollectionChangedAction.Reset)
                 {
-                    _owner.RestoreSelectionFromSnapshot(selectionSnapshot);
+                    // A reset says nothing about what was removed, so keep every selected item the
+                    // underlying data still holds and drop the rest. Previously this stretch of code
+                    // snapshotted the selection up front and restored it here, because the reset
+                    // invalidated the stored indexes; items need no such rescue.
+                    _owner.DropSelectionForRemovedItems();
                 }
 
                 _owner.UpdatePseudoClasses();
@@ -1350,32 +1318,11 @@ namespace Avalonia.Controls
                 // Ensure the visual selection state matches the restored selection after mutations
                 _owner.RefreshVisibleSelection();
 
-                if (_owner.Selection == null)
-                {
-                    _owner.ResyncSelectionModelFromGridSelection();
-                }
-                else
-                {
-                    _owner.RefreshSelectionFromModel();
-                }
-
+                _owner.RefreshSelectionFromModel();
                 _owner.RemapSelectedCellsToCurrentRows();
                 _owner.RequestSelectionOverlayRefresh();
 
-                if (restoreSyncingSelectionModel)
-                {
-                    _owner.PopSelectionSync(previousSyncingSelectionModel);
-                }
-
                 _owner.InvalidateMeasure();
-            }
-            finally
-            {
-                snapshotSuppression.Dispose();
-                if (updateSnapshotAfterChange)
-                {
-                    _owner.UpdateSelectionSnapshot();
-                }
             }
         }
 

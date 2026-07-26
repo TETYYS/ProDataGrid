@@ -1213,7 +1213,7 @@ internal
                 }
                 else if (GetRowSelection(slot))  // Unselecting single row or Selecting a previously multi-selected row
                 {
-                    if (!ctrl && SelectionMode == DataGridSelectionMode.Extended && _selectedItems.Count != 0)
+                    if (!ctrl && SelectionMode == DataGridSelectionMode.Extended && _selectionModel.Count != 0)
                     {
                         // Unselect everything except the row that was clicked on
                         action = DataGridSelectionAction.SelectCurrent;

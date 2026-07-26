@@ -138,7 +138,7 @@ namespace Avalonia.Controls
                 SelectionMode != DataGridSelectionMode.Extended ||
                 !isSelected ||
                 slot < 0 ||
-                _selectedItems.Count <= 1)
+                _selectionModel.Count <= 1)
             {
                 return false;
             }

@@ -27,7 +27,11 @@ namespace Avalonia.Controls.DataGridHierarchical
     #endif
     sealed class FlattenedChange
     {
-        public FlattenedChange(int index, int oldCount, int newCount)
+        public FlattenedChange(
+            int index,
+            int oldCount,
+            int newCount,
+            IReadOnlyList<FlattenedReplacement>? replacements = null)
         {
             if (index < 0)
             {
@@ -47,6 +51,7 @@ namespace Avalonia.Controls.DataGridHierarchical
             Index = index;
             OldCount = oldCount;
             NewCount = newCount;
+            Replacements = replacements ?? Array.Empty<FlattenedReplacement>();
         }
 
         public int Index { get; }
@@ -54,6 +59,43 @@ namespace Avalonia.Controls.DataGridHierarchical
         public int OldCount { get; }
 
         public int NewCount { get; }
+
+        /// <summary>
+        /// The nodes this change swapped out, each paired with the node that took its place.
+        /// Empty unless the change was a replacement.
+        /// </summary>
+        /// <remarks>
+        /// A replacement leaves the same number of rows behind it as it found, so it is
+        /// indistinguishable from a removal followed by an insertion if all a consumer has to go on
+        /// is <see cref="OldCount"/> and <see cref="NewCount"/> - and it would be wrong to guess,
+        /// because the two mean different things to anything keyed on the items rather than the
+        /// positions. Selection is one such thing: a replaced row keeps its selection, a removed row
+        /// loses it. The pairing is stated here so no one has to infer it from the shape.
+        /// </remarks>
+        public IReadOnlyList<FlattenedReplacement> Replacements { get; }
+    }
+
+    /// <summary>
+    /// One node giving up its place in the flattened list to another.
+    /// </summary>
+    #if !DATAGRID_INTERNAL
+    public
+    #else
+    internal
+    #endif
+    sealed class FlattenedReplacement
+    {
+        public FlattenedReplacement(HierarchicalNode replaced, HierarchicalNode replacement)
+        {
+            Replaced = replaced ?? throw new ArgumentNullException(nameof(replaced));
+            Replacement = replacement ?? throw new ArgumentNullException(nameof(replacement));
+        }
+
+        /// <summary>The node that was there before.</summary>
+        public HierarchicalNode Replaced { get; }
+
+        /// <summary>The node occupying its position now.</summary>
+        public HierarchicalNode Replacement { get; }
     }
 
     /// <summary>
@@ -2457,7 +2499,19 @@ namespace Avalonia.Controls.DataGridHierarchical
                     _flattened.InsertRange(flattenedIndex, visibleNodes);
                 }
 
-                OnFlattenedChanged(new[] { new FlattenedChange(flattenedIndex, removedVisible, insertedVisible) });
+                // Positional pairing only means anything when as many nodes came in as went out;
+                // a one-for-two swap is a splice that happens to start where a node used to be.
+                List<FlattenedReplacement>? replacements = null;
+                if (removedNodes.Count == newNodes.Count)
+                {
+                    replacements = new List<FlattenedReplacement>(newNodes.Count);
+                    for (var i = 0; i < newNodes.Count; i++)
+                    {
+                        replacements.Add(new FlattenedReplacement(removedNodes[i], newNodes[i]));
+                    }
+                }
+
+                OnFlattenedChanged(new[] { new FlattenedChange(flattenedIndex, removedVisible, insertedVisible, replacements) });
             }
             else if (parent.IsExpanded)
             {

@@ -714,7 +714,7 @@ public class LeakTests
     [ReleaseFact]
     public void DataGrid_ExternalSelectionModel_DoesNotLeak()
     {
-        var selectionModel = new SelectionModel<object>();
+        var selectionModel = new Avalonia.Controls.DataGridSelection.DataGridSelectionModel<object>();
         var items = new ObservableCollection<RowItem>
         {
             new RowItem("A"),

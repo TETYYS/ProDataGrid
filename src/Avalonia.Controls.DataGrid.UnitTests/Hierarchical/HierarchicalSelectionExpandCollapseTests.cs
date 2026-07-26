@@ -6,6 +6,7 @@ using System.Collections.ObjectModel;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.DataGridHierarchical;
+using Avalonia.Controls.DataGridSelection;
 using Avalonia.Controls.Selection;
 using Avalonia.Data;
 using Avalonia.Headless.XUnit;
@@ -44,7 +45,7 @@ public class HierarchicalSelectionExpandCollapseTests
         });
         model.SetRoot(root);
 
-        var selection = new SelectionModel<HierarchicalNode> { SingleSelect = true };
+        var selection = new DataGridSelectionModel<TreeItem> { SingleSelect = true };
 
         var grid = new DataGrid
         {
@@ -83,8 +84,8 @@ public class HierarchicalSelectionExpandCollapseTests
         var exception = Record.Exception(() => InvokeMouseSelection(grid, model, target));
 
         Assert.Null(exception);
-        Assert.NotNull(selection.SelectedItem);
-        Assert.True(selection.SelectedItem is HierarchicalNode node && ReferenceEquals(node.Item, target));
+        // The selection holds the caller's item, not the node wrapping it.
+        Assert.Same(target, selection.SelectedItem);
 
         window.Close();
     }

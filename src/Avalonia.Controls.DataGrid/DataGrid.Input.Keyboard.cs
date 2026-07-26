@@ -219,7 +219,7 @@ namespace Avalonia.Controls
                 {
                     desiredSlot = firstVisibleSlot;
                     action = DataGridSelectionAction.SelectCurrent;
-                    Debug.Assert(_selectedItems.Count == 0);
+                    Debug.Assert(_selectionModel.Count == 0);
                 }
                 else
                 {
@@ -271,7 +271,7 @@ namespace Avalonia.Controls
                 return false;
             }
 
-            object[] toRemove = _selectedItems
+            object[] toRemove = _selectionModel.SelectedItems
                 .OfType<object>()
                 .Where(item => item != DataGridCollectionView.NewItemPlaceholder)
                 .ToArray();

@@ -242,6 +242,23 @@ namespace Avalonia.Controls
         }
 
         /// <inheritdoc/>
+        public void OnItemsMoved(int oldStartIndex, int newStartIndex, int count)
+        {
+            if (count <= 0 || oldStartIndex == newStartIndex)
+            {
+                return;
+            }
+
+            // The item count is the same, so only the running estimate is affected, and only from
+            // the first row that moved onwards.
+            int firstMoved = Math.Min(oldStartIndex, newStartIndex);
+            if (firstMoved <= _lastEstimatedRow)
+            {
+                _lastEstimatedRow = Math.Max(-1, firstMoved - 1);
+            }
+        }
+
+        /// <inheritdoc/>
         public RowHeightEstimatorState CaptureState()
         {
             return new DefaultState(

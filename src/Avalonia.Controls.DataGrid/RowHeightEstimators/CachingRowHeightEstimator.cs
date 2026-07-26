@@ -389,6 +389,20 @@ namespace Avalonia.Controls
         }
 
         /// <inheritdoc/>
+        public void OnItemsMoved(int oldStartIndex, int newStartIndex, int count)
+        {
+            if (count <= 0 || oldStartIndex == newStartIndex)
+            {
+                return;
+            }
+
+            // Every height is kept, so the totals and the min/max carry over untouched. Only which
+            // slot each height belongs to changes.
+            MovedRowHeights.Apply(_measuredHeights, oldStartIndex, newStartIndex, count);
+            MovedRowHeights.Apply(_detailsHeights, oldStartIndex, newStartIndex, count);
+        }
+
+        /// <inheritdoc/>
         public RowHeightEstimatorState CaptureState()
         {
             return new CachingState(

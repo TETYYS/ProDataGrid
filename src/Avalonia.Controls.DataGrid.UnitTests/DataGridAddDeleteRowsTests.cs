@@ -524,18 +524,19 @@ public class DataGridAddDeleteRowsTests
         // Initial item count
         Assert.Single(items);
 
-        // Get placeholder slot
-        var placeholderRowIndex = grid.DataConnection.Count - 1; // Last index (includes placeholder)
-        
         // Set current cell to placeholder
         grid.ScrollIntoView(DataGridCollectionView.NewItemPlaceholder, grid.Columns[0]);
         PumpLayout(grid);
-        
-        // Select the placeholder row via index (this should be the last row)
-        grid.SelectedIndex = placeholderRowIndex;
-        grid.CurrentColumn = grid.Columns[0];
+
+        // Put the cursor on the placeholder row by slot. It used to be reached with
+        // SelectedIndex, which worked while selection was a row index over a row space that
+        // includes the placeholder. Selection is keyed on items now and the placeholder is not one
+        // - it stands for a row that does not exist yet - so it can be current without being
+        // selectable, and letting it into SelectedItems would hand consumers a sentinel.
+        var placeholderSlot = grid.SlotCount - 1;
+        grid.UpdateSelectionAndCurrency(columnIndex: 0, slot: placeholderSlot, DataGridSelectionAction.SelectCurrent, scrollIntoView: false);
         PumpLayout(grid);
-        
+
         // Try to begin edit which should trigger AddNew
         var canEdit = grid.BeginEdit();
         PumpLayout(grid);

@@ -14,6 +14,7 @@ using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
 using Avalonia.Controls.DataGridHierarchical;
 using Avalonia.Controls.DataGridSorting;
+using Avalonia.Controls.DataGridSelection;
 using Avalonia.Controls.Selection;
 using Avalonia.Controls.Templates;
 using Avalonia.Data;
@@ -1422,7 +1423,7 @@ public class HierarchicalHeadlessTests
         model.SetRoot(root);
         model.Expand(model.Root!);
 
-        var selectionModel = new SelectionModel<HierarchicalNode> { SingleSelect = false };
+        var selectionModel = new DataGridSelectionModel<HierarchicalNode> { SingleSelect = false };
 
         var grid = new DataGrid
         {
@@ -1464,7 +1465,7 @@ public class HierarchicalHeadlessTests
         window.Show();
         PumpLayout(grid);
 
-        selectionModel.Select(0);
+        selectionModel.SelectAt(0);
         PumpLayout(grid);
 
         var initialRows = GetVisibleRows(grid);

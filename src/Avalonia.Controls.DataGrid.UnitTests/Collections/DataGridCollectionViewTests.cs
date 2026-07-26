@@ -8,6 +8,7 @@ using System.Data;
 using System.Linq;
 using System.Reflection;
 using Avalonia.Collections;
+using Avalonia.Controls.DataGridSelection;
 using Avalonia.Controls.Selection;
 using Avalonia.Data;
 using Avalonia.Headless.XUnit;
@@ -50,7 +51,7 @@ public class DataGridCollectionViewTests
         var fourth = new object();
         var items = new ObservableCollection<object> { first, selected, third, fourth };
         var view = new DataGridCollectionView(items);
-        var selection = new SelectionModel<object>
+        var selection = new DataGridSelectionModel<object>
         {
             SingleSelect = false
         };
@@ -64,10 +65,10 @@ public class DataGridCollectionViewTests
             CanUserDeleteRows = false
         };
 
-        var changes = new List<SelectionModelSelectionChangedEventArgs<object>>();
+        var changes = new List<DataGridSelectionModelChangedEventArgs<object>>();
         selection.SelectionChanged += (_, e) => changes.Add(e);
 
-        selection.Select(1);
+        selection.SelectAt(1);
         changes.Clear();
 
         items.Move(1, 3);
@@ -75,10 +76,15 @@ public class DataGridCollectionViewTests
         Assert.Equal(new[] { first, third, fourth, selected }, view.Cast<object>().ToArray());
         Assert.Single(selection.SelectedItems);
         Assert.Same(selected, selection.SelectedItems[0]);
-        Assert.Equal(1, selection.SelectedIndex);
+
+        // The reported index follows the row. It used to stay at 1 - knowingly stale, because the
+        // model stored the index rather than the item and a move could not be expressed.
+        Assert.Equal(3, selection.SelectedIndex);
         Assert.True(grid.GetRowSelectionFromRowIndex(3));
         Assert.False(grid.GetRowSelectionFromRowIndex(1));
-        Assert.DoesNotContain(changes, e => e.DeselectedItems.Count > 0);
+
+        // A move is neither a selection nor a deselection, so nothing at all is reported.
+        Assert.Empty(changes);
     }
 
     [AvaloniaFact]
@@ -88,7 +94,7 @@ public class DataGridCollectionViewTests
             Enumerable.Range(0, 60).Select(i => (object)new MoveItem(i)));
         var selected = items[4];
         var view = new DataGridCollectionView(items);
-        var selection = new SelectionModel<object>
+        var selection = new DataGridSelectionModel<object>
         {
             SingleSelect = false
         };
@@ -117,10 +123,10 @@ public class DataGridCollectionViewTests
             window.Show();
             PumpLayout(window, grid);
 
-            selection.Select(4);
+            selection.SelectAt(4);
             PumpLayout(window, grid);
 
-            var changes = new List<SelectionModelSelectionChangedEventArgs<object>>();
+            var changes = new List<DataGridSelectionModelChangedEventArgs<object>>();
             selection.SelectionChanged += (_, e) => changes.Add(e);
 
             foreach (var targetIndex in new[] { 22, 2, 35, 7, 40, 1 })

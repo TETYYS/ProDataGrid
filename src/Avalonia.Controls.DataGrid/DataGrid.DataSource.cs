@@ -47,19 +47,6 @@ internal
                 _hierarchicalItemsSource = null;
             }
 
-            if (switchingFromOwnedHierarchical && _selectionModelAdapter?.Model != null)
-            {
-                _syncingSelectionModel = true;
-                try
-                {
-                    _selectionModelAdapter.Model.Source = null;
-                }
-                finally
-                {
-                    _syncingSelectionModel = false;
-                }
-            }
-
             if (!_areHandlersSuspended)
             {
                 Debug.Assert(DataConnection != null);
@@ -78,99 +65,68 @@ internal
                     CancelEdit(DataGridEditingUnit.Row, false);
                 }
 
-                // The grid's own selection is deliberately emptied below and only rebuilt after the
-                // model has been re-sourced, so nothing in between may push it into the selection
-                // model - adapter re-applies re-enter FlushSelectionChanged, which would otherwise
-                // clear the very selection we are about to remap onto the new view.
-                var swapSelectionSync = PushSelectionSync();
-                bool setDefaultSelection;
-                try
+                DataConnection.UnWireEvents(DataConnection.DataSource);
+                DataConnection.ClearDataProperties();
+                ClearRowGroupHeadersTable();
+                DataConnection.DataSource = null;
+
+                // Wrap an IEnumerable in an ICollectionView if it's not already one
+                bool setDefaultSelection = false;
+                if (newItemsSource is IDataGridCollectionView newCollectionView)
                 {
-                    DataConnection.UnWireEvents(DataConnection.DataSource);
-                    DataConnection.ClearDataProperties();
-                    ClearRowGroupHeadersTable();
+                    setDefaultSelection = true;
+                }
+                else
+                {
+                    newCollectionView =  newItemsSource is not null
+                        ? DataGridDataConnection.CreateView(newItemsSource)
+                        : default;
+                }
 
-                    // The old selected indexes are no longer relevant. There's a perf benefit from
-                    // updating the selected indexes with a null DataSource, because we know that all
-                    // of the previously selected indexes have been removed from selection
-                    DataConnection.DataSource = null;
-                    _selectedItems.UpdateIndexes();
-                    CoerceSelectedItem();
+                DataConnection.DataSource = newCollectionView;
 
-                    // Wrap an IEnumerable in an ICollectionView if it's not already one
-                    setDefaultSelection = false;
-                    if (newItemsSource is IDataGridCollectionView newCollectionView)
+                if (oldCollectionView != DataConnection.CollectionView)
+                {
+                    RaisePropertyChanged(CollectionViewProperty,
+                        oldCollectionView,
+                        newCollectionView);
+                }
+
+                UpdateSortingAdapterView();
+                UpdateFilteringAdapterView();
+                UpdateSearchAdapterView();
+                UpdateConditionalFormattingAdapterView();
+
+                if (DataConnection.DataSource != null)
+                {
+                    // Setup the column headers
+                    if (DataConnection.DataType != null)
                     {
-                        setDefaultSelection = true;
-                    }
-                    else
-                    {
-                        newCollectionView =  newItemsSource is not null
-                            ? DataGridDataConnection.CreateView(newItemsSource)
-                            : default;
-                    }
-
-                    DataConnection.DataSource = newCollectionView;
-
-                    if (oldCollectionView != DataConnection.CollectionView)
-                    {
-                        RaisePropertyChanged(CollectionViewProperty,
-                            oldCollectionView,
-                            newCollectionView);
-                    }
-
-                    UpdateSortingAdapterView();
-                    UpdateFilteringAdapterView();
-                    UpdateSearchAdapterView();
-                    UpdateConditionalFormattingAdapterView();
-
-                    if (DataConnection.DataSource != null)
-                    {
-                        // Setup the column headers
-                        if (DataConnection.DataType != null)
+                        foreach (var column in ColumnsInternal.GetDisplayedColumns())
                         {
-                            foreach (var column in ColumnsInternal.GetDisplayedColumns())
+                            if (column is DataGridBoundColumn boundColumn)
                             {
-                                if (column is DataGridBoundColumn boundColumn)
-                                {
-                                    boundColumn.SetHeaderFromBinding();
-                                }
+                                boundColumn.SetHeaderFromBinding();
                             }
                         }
-                        DataConnection.WireEvents(DataConnection.DataSource);
                     }
-
-                    UpdateSelectionModelSource();
-                }
-                finally
-                {
-                    PopSelectionSync(swapSelectionSync);
+                    DataConnection.WireEvents(DataConnection.DataSource);
                 }
 
-                var modelSelectionPending = _selectionModelAdapter?.Model != null &&
-                    (_selectionModelAdapter.Model.SelectedIndex >= 0 ||
-                     _selectionModelAdapter.Model.SelectedItems.Count > 0);
+                UpdateSelectionModelSource();
+
+                // The selection is a set of items, so swapping the view neither invalidates nor
+                // reorders it - there is nothing to snapshot and nothing to remap. Only items the new
+                // source does not contain have to go, which keeps a swap to an equivalent view (a
+                // re-wrapped DataGridCollectionView over the same data) fully selection-preserving.
+                DropSelectionForRemovedItems();
+
+                var modelSelectionPending = _selectionModel is { Count: > 0 };
 
                 // Wait for the current cell to be set before we raise any SelectionChanged events
                 _makeFirstDisplayedCellCurrentCellPending = true;
 
-                // Clear out the old rows and remove the generated columns
-                bool previousSelectionSync = false;
-                if (modelSelectionPending)
-                {
-                    previousSelectionSync = PushSelectionSync();
-                }
-                try
-                {
-                    ClearRows(false); //recycle
-                }
-                finally
-                {
-                    if (modelSelectionPending)
-                    {
-                        PopSelectionSync(previousSelectionSync);
-                    }
-                }
+                ClearRows(false); //recycle
                 RemoveAutoGeneratedColumns();
 
                 // Notify the estimator about the data source change
@@ -187,8 +143,6 @@ internal
                         SelectedItem = ProjectSelectionItem(DataConnection.CollectionView.CurrentItem);
                     }
 
-                    SyncSelectionModelFromGridSelection();
-
                     if (_selectedItemsBinding != null && _selectedItemsBinding.Count > 0)
                     {
                         ApplySelectedItemsFromBinding(_selectedItemsBinding);
@@ -196,7 +150,8 @@ internal
                 }
                 else
                 {
-                    ApplySelectionFromSelectionModel();
+                    CoerceSelectedItem();
+                    RefreshVisibleSelection();
                 }
 
                 // Treat this like the DataGrid has never been measured because all calculations at
@@ -211,218 +166,37 @@ internal
             }
         }
 
-        private void UpdateSelectionModelSource()
+
+        /// <summary>
+        /// Membership test for the underlying data, ignoring whether the current filter or page lets an
+        /// item through, so that filtering or paging a selected row out of sight hides it rather than
+        /// deselecting it.
+        /// </summary>
+        private Func<object, bool> SnapshotSelectionSourceMembership()
         {
-            if (_selectionModelAdapter != null)
+            if (_selectionView is DataGridSelection.DataGridCollectionViewSelectionView collectionSource)
             {
-                var previousSelectionSync = PushSelectionSync();
-                try
-                {
-                    var view = DataConnection?.CollectionView;
-                    IEnumerable source = view;
-
-                    if (view is DataGridCollectionView paged && paged.PageSize > 0)
-                    {
-                        _selectionSource?.Dispose();
-                        _selectionSource = null;
-                        _selectionSourceView = null;
-
-                        if (_pagedSelectionSource == null || !ReferenceEquals(_pagedSelectionSourceView, paged))
-                        {
-                            _pagedSelectionSource?.Dispose();
-                            _pagedSelectionSource = new DataGridSelection.DataGridPagedSelectionSource(paged);
-                            _pagedSelectionSourceView = paged;
-                        }
-                        source = _pagedSelectionSource;
-                    }
-                    else if (view is DataGridCollectionView collectionView)
-                    {
-                        _pagedSelectionSource?.Dispose();
-                        _pagedSelectionSource = null;
-                        _pagedSelectionSourceView = null;
-
-                        if (_selectionSource == null || !ReferenceEquals(_selectionSourceView, collectionView))
-                        {
-                            _selectionSource?.Dispose();
-                            _selectionSource = new DataGridSelection.DataGridSelectionSource(collectionView);
-                            _selectionSourceView = collectionView;
-                        }
-                        source = _selectionSource;
-                    }
-                    else
-                    {
-                        _pagedSelectionSource?.Dispose();
-                        _pagedSelectionSource = null;
-                        _pagedSelectionSourceView = null;
-                        _selectionSource?.Dispose();
-                        _selectionSource = null;
-                        _selectionSourceView = null;
-                    }
-
-                    _selectionModelAdapter.Model.Source = source;
-                }
-                finally
-                {
-                    PopSelectionSync(previousSelectionSync);
-                }
-            }
-        }
-
-        internal List<object> CaptureSelectionSnapshot()
-        {
-            // Prefer capturing via the selection model to avoid losing selection when the view
-            // issues a Reset (sorting/filtering/paging).
-            if (_selectionModelAdapter?.Model is { } model)
-            {
-                if (_selectionModelSnapshot is { Count: > 0 })
-                {
-                    return new List<object>(_selectionModelSnapshot);
-                }
-
-                if (model.SelectedIndexes is { Count: > 0 } indexes &&
-                    model.Source is IList list &&
-                    list.Count > 0)
-                {
-                    var snapshot = new List<object>();
-                    foreach (var index in indexes)
-                    {
-                        if (index >= 0 && index < list.Count)
-                        {
-                            snapshot.Add(list[index]);
-                        }
-                    }
-
-                    if (snapshot.Count > 0)
-                    {
-                        return snapshot;
-                    }
-                }
-
-                if (_selectionModelSnapshot is { Count: > 0 })
-                {
-                    return new List<object>(_selectionModelSnapshot);
-                }
+                var contains = collectionSource.SnapshotSourceMembership();
+                return item => contains(item);
             }
 
-            if (SelectedItems is { Count: > 0 } selected)
-            {
-                return new List<object>(selected.Cast<object>());
-            }
-
-            if (_hierarchicalRowsEnabled && _hierarchicalModel != null &&
-                _pendingHierarchicalSelectionSnapshot is { Count: > 0 })
-            {
-                return new List<object>(_pendingHierarchicalSelectionSnapshot);
-            }
-
-            return null;
+            var view = _selectionView;
+            return item => (view?.IndexOf(item) ?? -1) >= 0;
         }
 
-        internal void CacheHierarchicalSelectionSnapshot(IReadOnlyList<object> snapshot)
+        /// <summary>
+        /// Deselects items the underlying data no longer contains, after a change that did not say
+        /// which ones went (a Reset).
+        /// </summary>
+        internal void DropSelectionForRemovedItems()
         {
-            _pendingHierarchicalSelectionSnapshot = snapshot != null && snapshot.Count > 0
-                ? new List<object>(snapshot)
-                : null;
-        }
-
-        internal void CacheHierarchicalSelectionIndexes(IReadOnlyList<int> indexes)
-        {
-            _pendingHierarchicalSelectionIndexes = indexes != null && indexes.Count > 0
-                ? new List<int>(indexes)
-                : null;
-        }
-
-        internal void RestoreSelectionFromSnapshot(IReadOnlyList<object> selectedItems)
-        {
-            if (_selectionModelAdapter == null || selectedItems == null)
+            if (_selectionModel is not { Count: > 0 })
             {
                 return;
             }
 
-            using var _ = BeginSelectionChangeScope(DataGridSelectionChangeSource.SelectionModelSync);
-            _syncingSelectionModel = true;
-            try
-            {
-                int firstIndex = -1;
-
-                using (_selectionModelAdapter.SelectedItemsView.SuppressNotifications())
-                using (_selectionModelAdapter.Model.BatchUpdate())
-                {
-                    _selectionModelAdapter.Model.Clear();
-                    foreach (object item in selectedItems)
-                    {
-                        int index = GetSelectionModelIndexOfItem(item);
-                        if (index >= 0)
-                        {
-                            if (firstIndex == -1)
-                            {
-                                firstIndex = index;
-                            }
-
-                            _selectionModelAdapter.Select(index);
-                        }
-                    }
-                }
-
-                if (firstIndex >= 0)
-                {
-                    _preferredSelectionIndex = firstIndex;
-                }
-
-                ApplySelectionFromSelectionModel();
-
-                foreach (object item in selectedItems)
-                {
-                    int index = GetSelectionModelIndexOfItem(item);
-                    if (index >= 0)
-                    {
-                        SetValueNoCallback(SelectedItemProperty, ProjectSelectionItem(item));
-                        SetValueNoCallback(SelectedIndexProperty, index);
-                        break;
-                    }
-                }
-            }
-            finally
-            {
-                _syncingSelectionModel = false;
-            }
+            _selectionModel.RetainOnly(SnapshotSelectionSourceMembership());
         }
-
-        private void SyncSelectionModelFromGridSelection()
-        {
-            if (_selectionModelAdapter == null || DataConnection?.CollectionView == null || _syncingSelectionModel)
-            {
-                return;
-            }
-
-            _selectionModelAdapter.Model.BeginBatchUpdate();
-            _syncingSelectionModel = true;
-            try
-            {
-                _selectionModelAdapter.Model.Clear();
-                foreach (object item in _selectedItems)
-                {
-                    int index = GetSelectionModelIndexOfItem(item);
-                    if (index >= 0)
-                    {
-                        _selectionModelAdapter.Model.Select(index);
-                    }
-                }
-            }
-            finally
-            {
-                _selectionModelAdapter.Model.EndBatchUpdate();
-                _syncingSelectionModel = false;
-            }
-
-            UpdateSelectionSnapshot();
-        }
-
-        internal void ResyncSelectionModelFromGridSelection()
-        {
-            SyncSelectionModelFromGridSelection();
-        }
-
 
         internal void RefreshRowsAndColumns(bool clearRows)
         {
@@ -501,7 +275,7 @@ internal
             using var selectionScope = BeginSelectionChangeScope(DataGridSelectionChangeSource.ItemsSourceChange);
 
             var currentSelectionIndex = currentPosition;
-            if (_selectionModelAdapter != null && TryGetPagingInfo(out _, out var pageStart))
+            if (_selectionModel != null && TryGetPagingInfo(out _, out var pageStart))
             {
                 currentSelectionIndex = pageStart + currentPosition;
             }
@@ -539,11 +313,9 @@ internal
                 return;
             }
 
-            if (_selectionModelAdapter != null &&
-                _selectionModelAdapter.Model.SelectedIndexes.Count > 0 &&
-                !currentInSelection)
+            if (_selectionModel is { Count: > 0 } && !currentInSelection)
             {
-                ApplySelectionFromSelectionModel();
+                RefreshSelectionFromModel();
                 return;
             }
 

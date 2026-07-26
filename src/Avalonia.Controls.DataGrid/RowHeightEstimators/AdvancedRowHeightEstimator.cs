@@ -394,6 +394,33 @@ namespace Avalonia.Controls
         }
 
         /// <inheritdoc/>
+        public void OnItemsMoved(int oldStartIndex, int newStartIndex, int count)
+        {
+            if (count <= 0 || oldStartIndex == newStartIndex)
+            {
+                return;
+            }
+
+            MovedRowHeights.Apply(_measuredHeights, oldStartIndex, newStartIndex, count);
+            MovedRowHeights.Apply(_detailsHeights, oldStartIndex, newStartIndex, count);
+
+            // Every height survives, so the global figures are the same ones as before. What can
+            // have changed is which region each height falls in, so the regional averages over the
+            // span go and are re-recorded from the rows as they are measured again.
+            int lo = Math.Min(oldStartIndex, newStartIndex);
+            int hi = Math.Max(oldStartIndex, newStartIndex) + count - 1;
+            for (int region = lo / RegionSize; region <= hi / RegionSize; region++)
+            {
+                _regionStats.Remove(region);
+            }
+
+            // Prefix sums are position-dependent, and the measured range can start or end somewhere
+            // else now.
+            RecalculateStatistics();
+            RebuildFenwickTree();
+        }
+
+        /// <inheritdoc/>
         public RowHeightEstimatorState CaptureState()
         {
             var regionStats = new Dictionary<int, RegionStatisticsState>(_regionStats.Count);

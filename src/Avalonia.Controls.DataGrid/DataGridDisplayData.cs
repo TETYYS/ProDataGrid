@@ -327,6 +327,61 @@ namespace Avalonia.Controls
             }
         }
 
+        /// <summary>
+        /// Reorders the realized elements covering <paramref name="firstSlot"/> through
+        /// <paramref name="lastSlot"/> after a block of rows changed position.
+        /// </summary>
+        /// <remarks>
+        /// Relocating a block within a list rotates the span it travels over, so the elements
+        /// covering that span rotate with it and each one stays with the row it was showing. The
+        /// realized window itself does not move, because a move creates and destroys no slots.
+        /// Elements rotating past the end of the span wrap round to the other end, where they stand
+        /// in for rows that were never realized; the caller rebinds those.
+        /// </remarks>
+        /// <param name="firstSlot">First realized slot of the span.</param>
+        /// <param name="lastSlot">Last realized slot of the span.</param>
+        /// <param name="shift">How far to rotate, positive when the block moved to a later position.</param>
+        /// <returns>
+        /// False when the elements cannot be reordered in place, because collapsed slots inside the
+        /// window break the one-element-per-slot correspondence the rotation relies on.
+        /// </returns>
+        internal bool RotateScrollingElements(int firstSlot, int lastSlot, int shift)
+        {
+            Debug.Assert(firstSlot >= FirstScrollingSlot);
+            Debug.Assert(lastSlot <= LastScrollingSlot);
+
+            if (_scrollingElements.Count != LastScrollingSlot - FirstScrollingSlot + 1)
+            {
+                return false;
+            }
+
+            int length = lastSlot - firstSlot + 1;
+            if (length <= 1)
+            {
+                return true;
+            }
+
+            shift %= length;
+            if (shift < 0)
+            {
+                shift += length;
+            }
+
+            if (shift == 0)
+            {
+                return true;
+            }
+
+            NormalizeScrollingElements();
+
+            // Rotating left by `shift` is three reversals: each part on its own, then the whole span.
+            int start = firstSlot - FirstScrollingSlot;
+            _scrollingElements.Reverse(start, shift);
+            _scrollingElements.Reverse(start + shift, length - shift);
+            _scrollingElements.Reverse(start, length);
+            return true;
+        }
+
         #endregion
 
         #region Private Helpers
@@ -351,6 +406,22 @@ namespace Avalonia.Controls
                 return element;
             }
             return null;
+        }
+
+        /// <summary>
+        /// Rewrites the circular buffer so that the first realized slot sits at list position 0.
+        /// </summary>
+        private void NormalizeScrollingElements()
+        {
+            if (_headScrollingElements == 0)
+            {
+                return;
+            }
+
+            var ordered = new List<Control>(GetScrollingElements());
+            _scrollingElements.Clear();
+            _scrollingElements.AddRange(ordered);
+            _headScrollingElements = 0;
         }
 
         private int GetCircularListIndex(int slot, bool wrap)

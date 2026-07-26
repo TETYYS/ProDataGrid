@@ -393,7 +393,6 @@ internal
             try
             {
                 _noCurrentCellChangeCount++;
-                var selectionSnapshot = CaptureSelectionSnapshot();
 
                 // The underlying collection has changed and our editing row (if there is one)
                 // is no longer relevant, so we should force a cancel edit.
@@ -408,9 +407,6 @@ internal
                     NegVerticalOffset = 0;
                     RowHeightEstimator?.Reset();
                 }
-
-                // We want to persist selection throughout a reset, so store away the selected items
-                List<object> selectedItemsCache = new List<object>(_selectedItems.SelectedItemsCache);
 
                 var collapsedGroupsCache = RowGroupHeadersTable
                     .Where(g => !g.Value.IsVisible)
@@ -436,44 +432,12 @@ internal
                     }
                 }
 
-                // Re-select the old items
-                _selectedItems.SelectedItemsCache = selectedItemsCache;
+                // The rows were rebuilt, but the selection is a set of items and so came through the
+                // reset intact; only the grid state derived from it has to be recomputed.
                 CoerceSelectedItem();
                 if (RowDetailsVisibilityMode != DataGridRowDetailsVisibilityMode.Collapsed)
                 {
                     UpdateRowDetailsVisibilityMode(RowDetailsVisibilityMode);
-                }
-
-                if (_selectionModelAdapter != null &&
-                    (selectionSnapshot is { Count: > 0 } ||
-                     HasInvalidSelectionIndexes(_selectionModelAdapter.Model)))
-                {
-                    _syncingSelectionModel = true;
-                    try
-                    {
-                        using (_selectionModelAdapter.Model.BatchUpdate())
-                        {
-                            _selectionModelAdapter.Model.Clear();
-                            if (selectionSnapshot is { Count: > 0 })
-                            {
-                                foreach (var item in selectionSnapshot)
-                                {
-                                    int index = GetSelectionModelIndexOfItem(item);
-                                    if (index >= 0)
-                                    {
-                                        _selectionModelAdapter.Select(index);
-                                    }
-                                }
-                            }
-                        }
-
-                        ApplySelectionFromSelectionModel();
-                        UpdateSelectionSnapshot();
-                    }
-                    finally
-                    {
-                        _syncingSelectionModel = false;
-                    }
                 }
 
                 // The currently displayed rows may have incorrect visual states because of the selection change

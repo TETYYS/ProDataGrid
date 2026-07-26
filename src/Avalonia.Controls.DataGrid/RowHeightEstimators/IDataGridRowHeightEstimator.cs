@@ -128,6 +128,22 @@ namespace Avalonia.Controls
         void OnItemsRemoved(int startIndex, int count);
 
         /// <summary>
+        /// Called when a block of items changes position.
+        /// </summary>
+        /// <remarks>
+        /// The item count does not change, and neither does anything measured about the rows: the
+        /// heights already known simply belong to different indexes afterwards. Reporting the move
+        /// as a removal followed by an insertion would instead discard the moved rows' heights and
+        /// leave the estimator counting rows it has never seen.
+        /// </remarks>
+        /// <param name="oldStartIndex">The index the block starts at.</param>
+        /// <param name="newStartIndex">The index the block ends up starting at.</param>
+        /// <param name="count">The number of items in the block.</param>
+        void OnItemsMoved(int oldStartIndex, int newStartIndex, int count)
+        {
+        }
+
+        /// <summary>
         /// Creates a snapshot of the current estimation state for debugging.
         /// </summary>
         /// <returns>A diagnostic snapshot of the estimator state.</returns>

@@ -1,4 +1,4 @@
-﻿// This source is subject to the Microsoft Public License (Ms-PL).
+// This source is subject to the Microsoft Public License (Ms-PL).
 // Please see http://go.microsoft.com/fwlink/?LinkID=131993 for details.
 // All other rights reserved.
 
@@ -377,30 +377,27 @@ internal
         private Size? _rowsPresenterAvailableSize;
         private bool _scrollingByHeight;
         private IndexToValueTable<bool> _showDetailsTable;
-        private DataGridSelectedItemsCollection _selectedItems;
         private IList _selectedItemsBinding;
         private int _columnHeaderAnchorIndex = -1;
         private int _rowHeaderAnchorIndex = -1;
         private INotifyCollectionChanged _selectedItemsBindingNotifications;
         private IList<DataGridCellInfo> _selectedCellsBinding;
         private INotifyCollectionChanged _selectedCellsBindingNotifications;
-        private ISelectionModel _selectionModel;
-        private DataGridSelectionModelAdapter _selectionModelAdapter;
-        private ISelectionModel _selectionModelProxy;
-        private DataGridSelection.DataGridPagedSelectionSource _pagedSelectionSource;
-        private DataGridCollectionView _pagedSelectionSourceView;
-        private DataGridSelection.DataGridSelectionSource _selectionSource;
-        private DataGridCollectionView _selectionSourceView;
-        private List<object> _selectionModelSnapshot;
-        private DataGridSelectionMode? _detachedSelectionMode;
-        private bool? _detachedSelectionModelSingleSelect;
-        private bool _detachedSelectionChanged;
+
+        // The single authority for row selection: a set of items. Slots and indexes are derived from it
+        // on demand through _selectionView and never stored, so reordering the view - a move, a
+        // re-sort, a detach and reattach - leaves nothing to fix up and needs no bookkeeping here.
+        private DataGridSelectionModel _selectionModel;
+        private IDataGridSelectionView _selectionView;
+        private DataGridSelectedItemsView _selectedItemsView;
+
+        // Net delta for the grid's own SelectionChanged, accumulated across a whole grid operation
+        // (which may make several model calls) and drained by FlushSelectionChanged.
+        private readonly List<object> _pendingSelectionAdded = new();
+        private readonly List<object> _pendingSelectionRemoved = new();
+
         private bool _columnsChangedWhileDetached;
-        private DetachedSelectionMonitor _detachedSelectionMonitor;
-        private IReadOnlyList<object> _pendingHierarchicalSelectionSnapshot;
-        private IReadOnlyList<int> _pendingHierarchicalSelectionIndexes;
-        private bool _suppressSelectionSnapshotUpdates;
-        private bool _syncingSelectionModel;
+        private bool _selectionModeSetWhileDetached;
         private bool _suppressSelectionUpdatesFromRows;
         private bool _syncingSelectedItems;
         private bool _syncingSelectedCells;
@@ -415,7 +412,6 @@ internal
         private readonly HashSet<int> _selectedColumnHeaderIndices = new();
         private readonly AvaloniaList<DataGridColumn> _selectedColumnsView = new();
         private DataGridCellCoordinates _cellAnchor = new DataGridCellCoordinates(-1, -1);
-        private int _preferredSelectionIndex = -1;
         private IDataGridSelectionModelFactory _selectionModelFactory;
         private bool _autoScrollPending;
         private int _autoScrollRequestToken;
@@ -593,8 +589,6 @@ internal
 
             _loadedRows = new List<DataGridRow>();
             _lostFocusActions = new Queue<Action>();
-            _selectedItems = new DataGridSelectedItemsCollection(this);
-            _selectedItems.CollectionChanged += OnSelectedItemsCollectionChanged;
             _selectedCellsView.CollectionChanged += OnSelectedCellsCollectionChanged;
             _selectedColumnsView.CollectionChanged += OnSelectedColumnsCollectionChanged;
             RowGroupHeadersTable = new IndexToValueTable<DataGridRowGroupInfo>();
@@ -738,20 +732,7 @@ internal
         /// </summary>
         public IList SelectedItems
         {
-            get
-            {
-                if (_selectedItemsBinding != null)
-                {
-                    return _selectedItemsBinding;
-                }
-
-                if (_selectionModelAdapter != null)
-                {
-                    return _selectionModelAdapter.SelectedItemsView;
-                }
-
-                return _selectedItems;
-            }
+            get => _selectedItemsBinding ?? (IList)_selectedItemsView;
             set => SetSelectedItemsCollection(value);
         }
 
@@ -822,9 +803,9 @@ internal
         /// <summary>
         /// Gets or sets the selection model that drives row selection.
         /// </summary>
-        public ISelectionModel Selection
+        public DataGridSelectionModel Selection
         {
-            get => _selectionModelProxy ?? _selectionModel;
+            get => _selectionModel;
             set => SetSelectionModel(value);
         }
 
@@ -1982,9 +1963,9 @@ internal
         /// Creates the default selection model for the grid. Override to supply a custom model or
         /// set <see cref="SelectionModelFactory"/> before construction completes.
         /// </summary>
-        protected virtual ISelectionModel CreateSelectionModel()
+        protected virtual DataGridSelectionModel CreateSelectionModel()
         {
-            return _selectionModelFactory?.Create() ?? new SelectionModel<object?>();
+            return _selectionModelFactory?.Create() ?? new DataGridSelectionModel<object>();
         }
 
         /// <summary>
@@ -2191,7 +2172,12 @@ internal
                 {
                     DetachHierarchicalItemsSource();
                 }
-                UpdateSelectionProxy();
+
+                // Toggling this switches which collection supplies the row order, so the selection has
+                // to resolve its indexes against the other one from here on. The selected items
+                // themselves are unaffected.
+                UpdateSelectionModelSource();
+
                 var descriptorSnapshot = _sortingModel?.Descriptors?.ToList();
                 var ownsViewSorts = _sortingModel?.OwnsViewSorts ?? true;
                 RecreateSortingAdapter(descriptorSnapshot, ownsViewSorts);
@@ -2728,10 +2714,9 @@ internal
             return typedAdapter as Avalonia.Controls.DataGridHierarchical.DataGridHierarchicalAdapter;
         }
 
-        private void SetSelectionModel(ISelectionModel model, bool initializing = false)
+        private void SetSelectionModel(DataGridSelectionModel model, bool initializing = false)
         {
             var newModel = model ?? CreateSelectionModel();
-            var oldAdapter = _selectionModelAdapter;
             var oldModel = _selectionModel;
 
             if (ReferenceEquals(oldModel, newModel))
@@ -2739,92 +2724,124 @@ internal
                 return;
             }
 
-            if (newModel.Source != null &&
-                DataConnection?.CollectionView != null &&
-                !ReferenceEquals(newModel.Source, DataConnection.CollectionView))
-            {
-                // Allow reusing a SelectionModel across DataGrid instances by retargeting its Source
-                // to the new grid's view; selection indexes will remap when Source is reassigned.
-                newModel.Source = null;
-            }
-
-            var removedItems = oldModel?.SelectedItems?.ToArray() ?? Array.Empty<object>();
+            var removedItems = oldModel?.SelectedItems.ToArray() ?? Array.Empty<object>();
+            IList oldSelectedItems = _selectedItemsBinding ?? _selectedItemsView;
 
             DetachSelectionModel();
+
             _selectionModel = newModel;
-
-            _syncingSelectionModel = true;
-            try
-            {
-                _selectionModelAdapter = CreateSelectionModelAdapter(_selectionModel);
-                _selectionModelAdapter.Model.SingleSelect = SelectionMode == DataGridSelectionMode.Single;
-                WeakEventHandlerManager.Unsubscribe<SelectionModelSelectionChangedEventArgs, DataGrid>(
-                    _selectionModelAdapter.Model,
-                    nameof(ISelectionModel.SelectionChanged),
-                    SelectionModel_SelectionChanged);
-                WeakEventHandlerManager.Subscribe<ISelectionModel, SelectionModelSelectionChangedEventArgs, DataGrid>(
-                    _selectionModelAdapter.Model,
-                    nameof(ISelectionModel.SelectionChanged),
-                    SelectionModel_SelectionChanged);
-                WeakEventHandlerManager.Unsubscribe<EventArgs, DataGrid>(
-                    _selectionModelAdapter.Model,
-                    nameof(ISelectionModel.LostSelection),
-                    SelectionModel_LostSelection);
-                WeakEventHandlerManager.Subscribe<ISelectionModel, EventArgs, DataGrid>(
-                    _selectionModelAdapter.Model,
-                    nameof(ISelectionModel.LostSelection),
-                    SelectionModel_LostSelection);
-                WeakEventHandlerManager.Unsubscribe<SelectionModelIndexesChangedEventArgs, DataGrid>(
-                    _selectionModelAdapter.Model,
-                    nameof(ISelectionModel.IndexesChanged),
-                    SelectionModel_IndexesChanged);
-                WeakEventHandlerManager.Subscribe<ISelectionModel, SelectionModelIndexesChangedEventArgs, DataGrid>(
-                    _selectionModelAdapter.Model,
-                    nameof(ISelectionModel.IndexesChanged),
-                    SelectionModel_IndexesChanged);
-                WeakEventHandlerManager.Unsubscribe<PropertyChangedEventArgs, DataGrid>(
-                    _selectionModelAdapter.Model,
-                    nameof(INotifyPropertyChanged.PropertyChanged),
-                    SelectionModel_PropertyChanged);
-                WeakEventHandlerManager.Subscribe<INotifyPropertyChanged, PropertyChangedEventArgs, DataGrid>(
-                    (INotifyPropertyChanged)_selectionModelAdapter.Model,
-                    nameof(INotifyPropertyChanged.PropertyChanged),
-                    SelectionModel_PropertyChanged);
-                WeakEventHandlerManager.Unsubscribe<EventArgs, DataGrid>(
-                    _selectionModelAdapter.Model,
-                    nameof(ISelectionModel.SourceReset),
-                    SelectionModel_SourceReset);
-                WeakEventHandlerManager.Subscribe<ISelectionModel, EventArgs, DataGrid>(
-                    _selectionModelAdapter.Model,
-                    nameof(ISelectionModel.SourceReset),
-                    SelectionModel_SourceReset);
-
-                UpdateSelectionModelSource();
-            }
-            finally
-            {
-                _syncingSelectionModel = false;
-            }
-
-            UpdateSelectionProxy();
+            _selectionModel.Owner = this;
+            _selectionModel.SingleSelect = SelectionMode == DataGridSelectionMode.Single;
+            _selectedItemsView = new DataGridSelectedItemsView(_selectionModel);
+            UpdateSelectionModelSource();
 
             RaisePropertyChanged(SelectionProperty, oldModel, _selectionModel);
-            RaisePropertyChanged(
-                SelectedItemsProperty,
-                GetSelectedItemsViewOrBinding(oldAdapter),
-                SelectedItems);
+            RaisePropertyChanged(SelectedItemsProperty, oldSelectedItems, SelectedItems);
 
-            ApplySelectionFromSelectionModel();
+            CoerceSelectedItem();
+            RefreshVisibleSelection();
 
             if (!initializing && removedItems.Length > 0)
             {
-                var args = new SelectionChangedEventArgs(
+                OnSelectionChanged(new SelectionChangedEventArgs(
                     SelectionChangedEvent,
                     removedItems,
-                    Array.Empty<object>());
-                OnSelectionChanged(args);
+                    Array.Empty<object>()));
             }
         }
+
+        /// <summary>
+        /// Releases the model's hookup to this grid and to the view it resolves indexes against.
+        /// </summary>
+        /// <remarks>
+        /// Deliberately leaves the selection alone. Selection is a set of items, so a detach
+        /// invalidates nothing about it - which is why reattaching has no snapshot to restore and no
+        /// need to establish whether anything changed in the meantime.
+        /// </remarks>
+        private void DetachSelectionModel()
+        {
+            if (_selectionModel != null)
+            {
+                _selectionModel.Owner = null;
+                _selectionModel.AttachView(null);
+            }
+
+            _selectedItemsView?.Dispose();
+            _selectedItemsView = null;
+            DisposeSelectionView();
+        }
+
+        private void DisposeSelectionView()
+        {
+            (_selectionView as IDisposable)?.Dispose();
+            _selectionView = null;
+        }
+
+        private void AttachSelectionModelHandlers()
+        {
+            if (_selectionModel == null)
+            {
+                return;
+            }
+
+            _selectionModel.Owner = this;
+
+            // Both sides can have moved while the grid was away, and they mean the same thing, so one
+            // has to give. Whichever the consumer touched more recently is the instruction to keep;
+            // if that was the control's SelectionMode - or neither - the model follows it, which is
+            // also the right answer on a first attach where nothing has been detached at all.
+            if (_selectionModeSetWhileDetached || _selectionModel.SingleSelect == (SelectionMode == DataGridSelectionMode.Single))
+            {
+                _selectionModel.SingleSelect = SelectionMode == DataGridSelectionMode.Single;
+            }
+            else
+            {
+                SetValueNoCallback(
+                    SelectionModeProperty,
+                    _selectionModel.SingleSelect ? DataGridSelectionMode.Single : DataGridSelectionMode.Extended);
+            }
+
+            _selectionModeSetWhileDetached = false;
+            _selectedItemsView ??= new DataGridSelectedItemsView(_selectionModel);
+            UpdateSelectionModelSource();
+            CoerceSelectedItem();
+            RefreshVisibleSelection();
+        }
+
+        /// <summary>
+        /// Points the selection model at whatever currently supplies the grid's row order.
+        /// </summary>
+        internal void UpdateSelectionModelSource()
+        {
+            if (_selectionModel == null)
+            {
+                return;
+            }
+
+            DisposeSelectionView();
+
+            // Having a hierarchical model is not the same as showing it. The consumer can leave the
+            // model and HierarchicalRowsEnabled in place and point ItemsSource somewhere else, and
+            // then the rows come from the collection view - so the selection indexes have to as
+            // well, or they would name positions in a list that is not on screen.
+            if (IsHierarchicalItemsSourceCompatible())
+            {
+                _selectionView = new DataGridHierarchicalSelectionView(
+                    _hierarchicalModel,
+                    _selectionModel.InvalidateOrder);
+            }
+            else if (DataConnection?.CollectionView is DataGridCollectionView collectionView)
+            {
+                _selectionView = new DataGridCollectionViewSelectionView(
+                    collectionView,
+                    _selectionModel.Comparer,
+                    _selectionModel.InvalidateOrder);
+            }
+
+            _selectionModel.AttachView(_selectionView);
+        }
+
+        private int GetSelectionModelIndexOfItem(object item) => _selectionView?.IndexOf(item) ?? -1;
 
         private void SortingModel_SortingChanged(object sender, SortingChangedEventArgs e)
         {
@@ -2859,7 +2876,9 @@ internal
 
         private void OnSortingAdapterApplying()
         {
-            UpdateSelectionSnapshot();
+            // Nothing to preserve. A sort reorders the view, and the selection is a set of items, so it
+            // survives untouched - including reorders that custom adapters push through asynchronously
+            // after the sort call returns.
         }
 
         private void OnSortingAdapterApplied()
@@ -2867,31 +2886,15 @@ internal
             if (DataConnection?.CollectionView != null)
             {
                 RefreshRowsAndColumns(clearRows: false);
-                RestoreSelectionFromSnapshot();
                 RefreshSelectionFromModel();
                 RefreshColumnSortStates();
                 OnSortingChangedForSummaries();
-
-                // Some custom adapters (e.g., DynamicData) push sort changes upstream and the
-                // resulting collection mutations can arrive asynchronously after this callback.
-                // Re-run selection restoration on the UI thread to keep selection stable if the
-                // view reorders after the initial restore above.
-                Dispatcher.UIThread.Post(() =>
-                {
-                    if (DataConnection?.CollectionView != null)
-                    {
-                        RestoreSelectionFromSnapshot();
-                        RefreshSelectionFromModel();
-                    }
-                }, DispatcherPriority.Background);
-
                 TryRestorePendingScrollStateAfterViewRefresh();
             }
         }
 
         private void OnFilteringAdapterApplying()
         {
-            UpdateSelectionSnapshot();
         }
 
         private void OnFilteringAdapterApplied()
@@ -2899,7 +2902,6 @@ internal
             if (DataConnection?.CollectionView != null)
             {
                 RefreshRowsAndColumns(clearRows: false);
-                RestoreSelectionFromSnapshot();
                 RefreshSelectionFromModel();
                 RefreshColumnSortStates();
                 RefreshColumnFilterStates();
@@ -2936,6 +2938,13 @@ internal
                 _pendingHierarchicalAnchorHint = null;
             }
 
+            // Taken before anything below reads the view. A DataGridCollectionView refreshes itself
+            // lazily, so the first read of its Count resets it, and the reset reports the replaced
+            // items as removed and drops their selection - all from inside whatever statement
+            // happened to ask for a count. By then there is nothing left to say the selection used
+            // to be on the row that was replaced. See task: Count must not raise Reset.
+            var replacementSelection = CaptureHierarchicalReplacementSelection(e.Changes);
+
             var canApplyChanges = CanApplyHierarchicalFlattenedChanges(e);
             var hasAnchor = false;
             HierarchicalAnchor anchor = default;
@@ -2966,7 +2975,6 @@ internal
             using (_hierarchicalModel?.BeginVirtualizationGuard())
             using (_rowsPresenter?.BeginVirtualizationGuard())
             {
-                RemapSelectionForHierarchyChange(indexMap);
                 if (canApplyChanges)
                 {
                     var suppressOffsetAdjustments = hasAnchor;
@@ -3003,6 +3011,7 @@ internal
                     CurrentColumnIndex = -1;
                     CurrentSlot = -1;
                 }
+                ApplyHierarchicalReplacementSelection(replacementSelection);
                 RefreshSelectionFromModel();
                 RequestHierarchicalIndentationRefresh();
             }
@@ -3077,7 +3086,7 @@ internal
                 return false;
             }
 
-            if (_selectionModelAdapter == null || ColumnsItemsInternal.Count == 0)
+            if (_selectionModel == null || ColumnsItemsInternal.Count == 0)
             {
                 return false;
             }
@@ -3146,6 +3155,11 @@ internal
 
             foreach (var change in changes)
             {
+                if (TryApplyHierarchicalReplace(change))
+                {
+                    continue;
+                }
+
                 for (var i = 0; i < change.OldCount; i++)
                 {
                     RemoveRowAt(change.Index, null);
@@ -3156,6 +3170,126 @@ internal
                     InsertRowAt(change.Index + i);
                 }
             }
+        }
+
+        /// <summary>
+        /// Handles a change that puts back exactly as many rows as it took away: a replacement.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// Like a move, a replacement is not a removal followed by an insertion even though it ends
+        /// in the same arrangement. No slot is created or destroyed, so the rows keep their
+        /// containers and are simply pointed at whatever now occupies their position, and the
+        /// current cell, scroll offset and details state are left alone.
+        /// </para>
+        /// <para>
+        /// The selection is not this method's concern: it is carried across by
+        /// <see cref="CaptureHierarchicalReplacementSelection"/>, which runs whether or not the rows
+        /// can be rebound in place, and so covers the grouped and full-refresh paths too.
+        /// </para>
+        /// </remarks>
+        /// <summary>
+        /// Notes which of the items about to be replaced are selected, and what is taking their
+        /// place, so the selection can follow them once the change has been applied.
+        /// </summary>
+        /// <remarks>
+        /// Must run before anything touches the collection view - see the call site. It reads only
+        /// the model's own pairing and the selection, neither of which can trigger a refresh.
+        /// </remarks>
+        private List<(object Replaced, object Replacement)>? CaptureHierarchicalReplacementSelection(
+            IReadOnlyList<FlattenedChange> changes)
+        {
+            if (_selectionModel is not { Count: > 0 } || changes == null)
+            {
+                return null;
+            }
+
+            List<(object, object)>? transfers = null;
+
+            foreach (var change in changes)
+            {
+                foreach (var replacement in change.Replacements)
+                {
+                    if (ProjectSelectionItem(replacement.Replaced) is not { } replaced ||
+                        !_selectionModel.IsSelected(replaced))
+                    {
+                        continue;
+                    }
+
+                    if (ProjectSelectionItem(replacement.Replacement) is not { } replacedBy)
+                    {
+                        continue;
+                    }
+
+                    (transfers ??= new List<(object, object)>()).Add((replaced, replacedBy));
+                }
+            }
+
+            return transfers;
+        }
+
+        /// <summary>
+        /// Moves the selection from the items a replacement took away onto the items it put in their
+        /// place, so that replacing the item under a selected row leaves that row selected.
+        /// </summary>
+        private void ApplyHierarchicalReplacementSelection(
+            List<(object Replaced, object Replacement)>? transfers)
+        {
+            if (transfers == null || _selectionModel == null)
+            {
+                return;
+            }
+
+            using (_selectionModel.BatchUpdate())
+            {
+                foreach (var (replaced, replacement) in transfers)
+                {
+                    // The replaced item may already have been dropped by a reset that ran while the
+                    // change was being applied. Deselecting it again costs nothing and means this
+                    // does not depend on whether that happened.
+                    _selectionModel.Deselect(replaced);
+                    _selectionModel.Select(replacement);
+                }
+            }
+        }
+
+        private bool TryApplyHierarchicalReplace(FlattenedChange change)
+        {
+            if (change.OldCount != 1 || change.NewCount != 1 || change.Replacements.Count != 1)
+            {
+                // Only a change that says outright that it replaced one row with one other row can
+                // keep the container and rebind it. Anything else - including a removal and an
+                // insertion that happen to be the same size - has to go the long way round, because
+                // the rows on either side are not standing in for each other.
+                return false;
+            }
+
+            var slot = change.Index;
+            if (slot < 0 || slot >= SlotCount || IsGroupSlot(slot))
+            {
+                return false;
+            }
+
+            var rowIndex = RowIndexFromSlot(slot);
+            if (rowIndex < 0 || rowIndex >= DataConnection.Count)
+            {
+                return false;
+            }
+
+            var newItem = ProjectSelectionItem(DataConnection.GetDataItem(rowIndex));
+            if (newItem == null)
+            {
+                return false;
+            }
+
+            if (IsSlotVisible(slot) && DisplayData.GetDisplayedElement(slot) is DataGridRow row)
+            {
+                RebindRow(row, rowIndex, slot, newItem);
+            }
+
+            RequestPointerOverRefresh();
+            InvalidateRowsArrange();
+            return true;
         }
 
         /// <summary>
@@ -3785,178 +3919,6 @@ internal
             }
         }
 
-        private bool RemapSelectionForHierarchyChange(Avalonia.Controls.DataGridHierarchical.FlattenedIndexMap? indexMap)
-        {
-            if (indexMap == null || _selectionModelAdapter == null)
-            {
-                return false;
-            }
-
-            var model = _selectionModelAdapter.Model;
-            var selected = model.SelectedIndexes;
-            IReadOnlyList<int>? pendingIndexes = null;
-            IReadOnlyList<object>? selectionSnapshot = null;
-            if (_pendingHierarchicalSelectionSnapshot == null || _pendingHierarchicalSelectionSnapshot.Count == 0)
-            {
-                var snapshotForReset = CaptureSelectionSnapshot();
-                if (snapshotForReset is { Count: > 0 })
-                {
-                    _pendingHierarchicalSelectionSnapshot = new List<object>(snapshotForReset);
-                }
-            }
-            if (_pendingHierarchicalSelectionIndexes == null || _pendingHierarchicalSelectionIndexes.Count == 0)
-            {
-                if (selected is { Count: > 0 })
-                {
-                    _pendingHierarchicalSelectionIndexes = new List<int>(selected);
-                }
-            }
-            pendingIndexes = _pendingHierarchicalSelectionIndexes;
-            if ((pendingIndexes == null || pendingIndexes.Count == 0) &&
-                (selected == null || selected.Count == 0))
-            {
-                selectionSnapshot = _pendingHierarchicalSelectionSnapshot;
-                if (selectionSnapshot == null || selectionSnapshot.Count == 0)
-                {
-                    selectionSnapshot = CaptureSelectionSnapshot();
-                }
-
-                if (selectionSnapshot == null || selectionSnapshot.Count == 0)
-                {
-                    _pendingHierarchicalSelectionSnapshot = null;
-                    _pendingHierarchicalSelectionIndexes = null;
-                    return false;
-                }
-            }
-            var mapped = new List<int>(pendingIndexes?.Count ?? selected?.Count ?? selectionSnapshot?.Count ?? 0);
-            var seen = new HashSet<int>();
-
-            if (pendingIndexes != null && pendingIndexes.Count > 0)
-            {
-                foreach (var index in pendingIndexes)
-                {
-                    var mappedIndex = indexMap.MapOldIndexToNew(index);
-                    if (mappedIndex >= 0 && seen.Add(mappedIndex))
-                    {
-                        mapped.Add(mappedIndex);
-                    }
-                }
-            }
-            else if (selected != null && selected.Count > 0)
-            {
-                foreach (var index in selected)
-                {
-                    var mappedIndex = indexMap.MapOldIndexToNew(index);
-                    if (mappedIndex >= 0 && seen.Add(mappedIndex))
-                    {
-                        mapped.Add(mappedIndex);
-                    }
-                }
-            }
-            if (mapped.Count == 0)
-            {
-                if (selectionSnapshot == null || selectionSnapshot.Count == 0)
-                {
-                    selectionSnapshot = _pendingHierarchicalSelectionSnapshot;
-                    if (selectionSnapshot == null || selectionSnapshot.Count == 0)
-                    {
-                        selectionSnapshot = CaptureSelectionSnapshot();
-                    }
-                }
-
-                if (selectionSnapshot != null)
-                {
-                    foreach (var item in selectionSnapshot)
-                    {
-                        var mappedIndex = GetSelectionModelIndexOfItem(item);
-                        if (mappedIndex >= 0 && seen.Add(mappedIndex))
-                        {
-                            mapped.Add(mappedIndex);
-                        }
-                    }
-                }
-            }
-            var preferredMapped = _preferredSelectionIndex >= 0
-                ? indexMap.MapOldIndexToNew(_preferredSelectionIndex)
-                : -1;
-
-            var previous = PushSelectionSync();
-            var source = model.Source;
-            var view = DataConnection?.CollectionView;
-            try
-            {
-                if (source != null)
-                {
-                    model.Source = null;
-                }
-
-                using (_selectionModelAdapter.SelectedItemsView.SuppressNotifications())
-                using (model.BatchUpdate())
-                {
-                    model.Clear();
-                    foreach (var index in mapped)
-                    {
-                        model.Select(index);
-                    }
-                }
-
-                _preferredSelectionIndex = preferredMapped >= 0
-                    ? preferredMapped
-                    : (mapped.Count > 0 ? mapped[0] : -1);
-
-                if (mapped.Count == 0 && DataConnection?.CollectionView != null)
-                {
-                    DataConnection.CollectionView.MoveCurrentTo(null);
-                }
-
-                UpdateSelectionSnapshot();
-            }
-            finally
-            {
-                if (source != null)
-                {
-                    if (view != null)
-                    {
-                        NoCurrentCellChangeCount++;
-                        try
-                        {
-                            view.Refresh();
-                        }
-                        finally
-                        {
-                            NoCurrentCellChangeCount--;
-                        }
-                    }
-
-                    if (model.Source != source)
-                    {
-                        model.Source = source;
-                    }
-                }
-
-                PopSelectionSync(previous);
-                ClearPendingHierarchicalSelection();
-            }
-
-            return source != null && view != null;
-        }
-
-        private void UpdateSelectionProxy()
-        {
-            if (_selectionModelAdapter?.Model != null &&
-                _hierarchicalRowsEnabled &&
-                _hierarchicalModel != null)
-            {
-                _selectionModelProxy = new HierarchicalSelectionProxy(
-                    _selectionModelAdapter.Model,
-                    ProjectHierarchicalSelectionItem,
-                    ResolveHierarchicalIndex);
-            }
-            else
-            {
-                _selectionModelProxy = null;
-            }
-        }
 
         private object? ProjectHierarchicalSelectionItem(object? item)
         {
@@ -4154,7 +4116,12 @@ internal
             DetachBoundSelectedItems();
             DetachBoundSelectedCells();
 
-            DetachSelectionModel(preserveSnapshot: true);
+            // The selection model is deliberately left wired. Leaving the visual tree changes nothing
+            // about the data: the grid keeps its items source, so the view the model resolves indexes
+            // against is still valid, and a selection made while detached still has somewhere to
+            // report to. Severing it here is what used to make a detached selection unreadable and
+            // needed a monitor to detect changes that happened in the gap. Replacing the model is a
+            // different matter, and SetSelectionModel still detaches the old one.
             DetachSortingModelHandlers();
             DetachFilteringModelHandlers();
             DetachSearchModelHandlers();
@@ -4326,258 +4293,6 @@ internal
             }
         }
 
-        private void AttachSelectionModelHandlers()
-        {
-            if (_selectionModel == null)
-            {
-                return;
-            }
-
-            _syncingSelectionModel = true;
-            try
-            {
-                if (_selectionModelAdapter == null)
-                {
-                    _selectionModelAdapter = CreateSelectionModelAdapter(_selectionModel);
-                }
-
-                var model = _selectionModelAdapter.Model;
-                DetachDetachedSelectionMonitor();
-                SyncSelectionModeOnAttach(model);
-
-                WeakEventHandlerManager.Unsubscribe<SelectionModelSelectionChangedEventArgs, DataGrid>(
-                    model,
-                    nameof(ISelectionModel.SelectionChanged),
-                    SelectionModel_SelectionChanged);
-                WeakEventHandlerManager.Subscribe<ISelectionModel, SelectionModelSelectionChangedEventArgs, DataGrid>(
-                    model,
-                    nameof(ISelectionModel.SelectionChanged),
-                    SelectionModel_SelectionChanged);
-                WeakEventHandlerManager.Unsubscribe<EventArgs, DataGrid>(
-                    model,
-                    nameof(ISelectionModel.LostSelection),
-                    SelectionModel_LostSelection);
-                WeakEventHandlerManager.Subscribe<ISelectionModel, EventArgs, DataGrid>(
-                    model,
-                    nameof(ISelectionModel.LostSelection),
-                    SelectionModel_LostSelection);
-                WeakEventHandlerManager.Unsubscribe<SelectionModelIndexesChangedEventArgs, DataGrid>(
-                    model,
-                    nameof(ISelectionModel.IndexesChanged),
-                    SelectionModel_IndexesChanged);
-                WeakEventHandlerManager.Subscribe<ISelectionModel, SelectionModelIndexesChangedEventArgs, DataGrid>(
-                    model,
-                    nameof(ISelectionModel.IndexesChanged),
-                    SelectionModel_IndexesChanged);
-                WeakEventHandlerManager.Unsubscribe<PropertyChangedEventArgs, DataGrid>(
-                    model,
-                    nameof(INotifyPropertyChanged.PropertyChanged),
-                    SelectionModel_PropertyChanged);
-                WeakEventHandlerManager.Subscribe<INotifyPropertyChanged, PropertyChangedEventArgs, DataGrid>(
-                    (INotifyPropertyChanged)model,
-                    nameof(INotifyPropertyChanged.PropertyChanged),
-                    SelectionModel_PropertyChanged);
-                WeakEventHandlerManager.Unsubscribe<EventArgs, DataGrid>(
-                    model,
-                    nameof(ISelectionModel.SourceReset),
-                    SelectionModel_SourceReset);
-                WeakEventHandlerManager.Subscribe<ISelectionModel, EventArgs, DataGrid>(
-                    model,
-                    nameof(ISelectionModel.SourceReset),
-                    SelectionModel_SourceReset);
-
-                UpdateSelectionModelSource();
-            }
-            finally
-            {
-                _syncingSelectionModel = false;
-            }
-
-            UpdateSelectionProxy();
-
-            if (_selectedItemsBinding == null)
-            {
-                if (ShouldRestoreSelectionSnapshot(_selectionModelAdapter.Model))
-                {
-                    RestoreSelectionFromSnapshot();
-                }
-                ApplySelectionFromSelectionModel();
-                UpdateSelectionSnapshot();
-            }
-
-            _detachedSelectionChanged = false;
-        }
-
-        private void SyncSelectionModeOnAttach(ISelectionModel model)
-        {
-            if (_detachedSelectionMode.HasValue && _detachedSelectionModelSingleSelect.HasValue)
-            {
-                var modeChanged = _detachedSelectionMode.Value != SelectionMode;
-                var modelChanged = _detachedSelectionModelSingleSelect.Value != model.SingleSelect;
-
-                if (!modeChanged && modelChanged)
-                {
-                    var targetMode = model.SingleSelect
-                        ? DataGridSelectionMode.Single
-                        : DataGridSelectionMode.Extended;
-
-                    if (SelectionMode != targetMode)
-                    {
-                        SetValueNoCallback(SelectionModeProperty, targetMode);
-                    }
-                }
-            }
-
-            model.SingleSelect = SelectionMode == DataGridSelectionMode.Single;
-            _detachedSelectionMode = null;
-            _detachedSelectionModelSingleSelect = null;
-        }
-
-        private void AttachDetachedSelectionMonitor(ISelectionModel model)
-        {
-            if (model == null)
-            {
-                return;
-            }
-
-            if (_detachedSelectionMonitor != null
-                && ReferenceEquals(_detachedSelectionMonitor.Model, model))
-            {
-                return;
-            }
-
-            DetachDetachedSelectionMonitor();
-            _detachedSelectionMonitor = new DetachedSelectionMonitor(this, model);
-        }
-
-        private void DetachDetachedSelectionMonitor()
-        {
-            if (_detachedSelectionMonitor == null)
-            {
-                return;
-            }
-
-            _detachedSelectionMonitor.Dispose();
-            _detachedSelectionMonitor = null;
-        }
-
-        private void DetachedSelectionModel_SelectionChanged(object sender, SelectionModelSelectionChangedEventArgs e)
-        {
-            MarkDetachedSelectionChanged();
-        }
-
-        private void DetachedSelectionModel_IndexesChanged(object sender, SelectionModelIndexesChangedEventArgs e)
-        {
-            MarkDetachedSelectionChanged();
-        }
-
-        private void DetachedSelectionModel_LostSelection(object sender, EventArgs e)
-        {
-            MarkDetachedSelectionChanged();
-        }
-
-        private void MarkDetachedSelectionChanged()
-        {
-            _detachedSelectionChanged = true;
-        }
-
-        private sealed class DetachedSelectionMonitor : IDisposable
-        {
-            private readonly WeakReference<DataGrid> _owner;
-            private ISelectionModel _model;
-            private readonly EventHandler<SelectionModelSelectionChangedEventArgs> _selectionChanged;
-            private readonly EventHandler<SelectionModelIndexesChangedEventArgs> _indexesChanged;
-            private readonly EventHandler _lostSelection;
-
-            public DetachedSelectionMonitor(DataGrid owner, ISelectionModel model)
-            {
-                _owner = new WeakReference<DataGrid>(owner ?? throw new ArgumentNullException(nameof(owner)));
-                _model = model ?? throw new ArgumentNullException(nameof(model));
-                _selectionChanged = OnSelectionChanged;
-                _indexesChanged = OnIndexesChanged;
-                _lostSelection = OnLostSelection;
-
-                _model.SelectionChanged += _selectionChanged;
-                _model.IndexesChanged += _indexesChanged;
-                _model.LostSelection += _lostSelection;
-            }
-
-            public ISelectionModel Model => _model;
-
-            private void OnSelectionChanged(object sender, SelectionModelSelectionChangedEventArgs e)
-            {
-                if (TryGetOwner(out var owner))
-                {
-                    owner.MarkDetachedSelectionChanged();
-                }
-            }
-
-            private void OnIndexesChanged(object sender, SelectionModelIndexesChangedEventArgs e)
-            {
-                if (TryGetOwner(out var owner))
-                {
-                    owner.MarkDetachedSelectionChanged();
-                }
-            }
-
-            private void OnLostSelection(object sender, EventArgs e)
-            {
-                if (TryGetOwner(out var owner))
-                {
-                    owner.MarkDetachedSelectionChanged();
-                }
-            }
-
-            private bool TryGetOwner(out DataGrid owner)
-            {
-                if (_owner.TryGetTarget(out owner))
-                {
-                    return true;
-                }
-
-                Dispose();
-                return false;
-            }
-
-            public void Dispose()
-            {
-                if (_model == null)
-                {
-                    return;
-                }
-
-                _model.SelectionChanged -= _selectionChanged;
-                _model.IndexesChanged -= _indexesChanged;
-                _model.LostSelection -= _lostSelection;
-                _model = null;
-            }
-        }
-
-        private bool ShouldRestoreSelectionSnapshot(ISelectionModel model)
-        {
-            if (_selectionModelSnapshot == null || _selectionModelSnapshot.Count == 0)
-            {
-                return false;
-            }
-
-            if (_detachedSelectionChanged)
-            {
-                return false;
-            }
-
-            if (HasInvalidSelectionIndexes(model))
-            {
-                return true;
-            }
-
-            var selected = model.SelectedIndexes;
-            if (selected is { Count: > 0 } || model.SelectedIndex >= 0)
-            {
-                return false;
-            }
-
-            return true;
-        }
 
         private void AttachSortingModelHandlers()
         {
@@ -4760,7 +4475,7 @@ internal
             }
 
             EnsureHierarchicalItemsSource();
-            UpdateSelectionProxy();
+            UpdateSelectionModelSource();
         }
 
         private void DetachHierarchicalModelHandlers()
@@ -5491,8 +5206,8 @@ internal
             var ownsViewSorts = _sortingModel?.OwnsViewSorts ?? true;
 
             EnsureHierarchicalItemsSource();
-            UpdateSelectionProxy();
             RecreateSortingAdapter(descriptorSnapshot, ownsViewSorts);
+            UpdateSelectionModelSource();
             RaisePropertyChanged(HierarchicalModelProperty, oldModel, _hierarchicalModel);
         }
 
@@ -5869,125 +5584,13 @@ internal
             _sortingAdapter?.HandleHeaderClick(column, keyModifiers, forcedDirection);
         }
 
-        private IList GetSelectedItemsViewOrBinding(DataGridSelectionModelAdapter oldAdapter)
-        {
-            if (_selectedItemsBinding != null)
-            {
-                return _selectedItemsBinding;
-            }
-
-            if (oldAdapter != null)
-            {
-                return oldAdapter.SelectedItemsView;
-            }
-
-            return _selectedItems;
-        }
-
-        private void DetachSelectionModel(bool preserveSnapshot = false)
-        {
-            if (!preserveSnapshot)
-            {
-                _detachedSelectionMode = null;
-                _detachedSelectionModelSingleSelect = null;
-                _detachedSelectionChanged = false;
-                DetachDetachedSelectionMonitor();
-            }
-
-            if (_selectionModelAdapter != null)
-            {
-                var model = _selectionModelAdapter.Model;
-                if (preserveSnapshot)
-                {
-                    UpdateSelectionSnapshot();
-                    _detachedSelectionMode = SelectionMode;
-                    _detachedSelectionModelSingleSelect = model.SingleSelect;
-                    _detachedSelectionChanged = false;
-                    AttachDetachedSelectionMonitor(model);
-                }
-                WeakEventHandlerManager.Unsubscribe<SelectionModelSelectionChangedEventArgs, DataGrid>(
-                    model,
-                    nameof(ISelectionModel.SelectionChanged),
-                    SelectionModel_SelectionChanged);
-                WeakEventHandlerManager.Unsubscribe<EventArgs, DataGrid>(
-                    model,
-                    nameof(ISelectionModel.LostSelection),
-                    SelectionModel_LostSelection);
-                WeakEventHandlerManager.Unsubscribe<SelectionModelIndexesChangedEventArgs, DataGrid>(
-                    model,
-                    nameof(ISelectionModel.IndexesChanged),
-                    SelectionModel_IndexesChanged);
-                WeakEventHandlerManager.Unsubscribe<PropertyChangedEventArgs, DataGrid>(
-                    model,
-                    nameof(INotifyPropertyChanged.PropertyChanged),
-                    SelectionModel_PropertyChanged);
-                WeakEventHandlerManager.Unsubscribe<EventArgs, DataGrid>(
-                    model,
-                    nameof(ISelectionModel.SourceReset),
-                    SelectionModel_SourceReset);
-                _selectionModelAdapter.Dispose();
-                _selectionModelAdapter = null;
-                if (!preserveSnapshot)
-                {
-                    model.Source = null;
-                }
-            }
-
-            if (!preserveSnapshot)
-            {
-                _pagedSelectionSource?.Dispose();
-                _pagedSelectionSource = null;
-                _pagedSelectionSourceView = null;
-                _selectionSource?.Dispose();
-                _selectionSource = null;
-                _selectionSourceView = null;
-            }
-            _selectionModelProxy = null;
-            if (!preserveSnapshot)
-            {
-                _selectionModelSnapshot = null;
-            }
-        }
-
-        /// <summary>
-        /// Creates the adapter that wraps an <see cref="ISelectionModel"/> for this grid. Override
-        /// to customize index/slot mapping or SelectedItems projection.
-        /// </summary>
-        /// <param name="model">The selection model instance to adapt.</param>
-        protected virtual DataGridSelectionModelAdapter CreateSelectionModelAdapter(ISelectionModel model)
-        {
-            return new DataGridSelectionModelAdapter(model, ProjectSelectionItem, ResolveSelectionIndex);
-        }
 
         /// <summary>
         /// Maps a visual slot to a selection-model index. Override to customize mapping for grouped
         /// or hierarchical scenarios.
         /// </summary>
         protected virtual int SelectionIndexFromSlot(int slot)
-        {
-            if (IsGroupSlot(slot))
-            {
-                return -1;
-            }
-
-            var rowIndex = RowIndexFromSlot(slot);
-            if (rowIndex < 0)
-            {
-                return -1;
-            }
-
-            if (TryGetPagingInfo(out var pagedView, out var pageStart))
-            {
-                return pageStart + rowIndex;
-            }
-
-            if (TryGetSelectionSourceIndexFromRowIndex(rowIndex, out var selectionSourceIndex))
-            {
-                return selectionSourceIndex;
-            }
-
-            return rowIndex;
-        }
+            => TryGetItemForSlot(slot, out var item) ? GetSelectionModelIndexOfItem(item) : -1;
 
         /// <summary>
         /// Maps a selection-model index back to a visual slot. Override to customize mapping for
@@ -5995,34 +5598,12 @@ internal
         /// </summary>
         protected virtual int SlotFromSelectionIndex(int index)
         {
-            if (index < 0 || DataConnection == null)
+            if (index < 0 || DataConnection == null || _selectionView == null)
             {
                 return -1;
             }
 
-            if (TryGetPagingInfo(out var pagedView, out var pageStart))
-            {
-                var localIndex = index - pageStart;
-                if (localIndex < 0 || localIndex >= pagedView.Count)
-                {
-                    return -1;
-                }
-
-                return SlotFromRowIndex(localIndex);
-            }
-
-            if (TryGetSelectionSourceItem(index, out var item) &&
-                TryGetRowIndexFromItem(item, out var rowIndex))
-            {
-                return SlotFromRowIndex(rowIndex);
-            }
-
-            if (index >= DataConnection.Count)
-            {
-                return -1;
-            }
-
-            return SlotFromRowIndex(index);
+            return _selectionView.TryGetItemAt(index, out var item) ? SlotForItem(item) : -1;
         }
 
         private bool TryGetPagingInfo(out DataGridCollectionView view, out int pageStart)
@@ -6036,135 +5617,6 @@ internal
 
             pageStart = 0;
             return false;
-        }
-
-        private int GetSelectionModelIndexOfItem(object item)
-        {
-            if (item == null || DataConnection == null)
-            {
-                return -1;
-            }
-
-            if (_hierarchicalRowsEnabled && _hierarchicalModel != null &&
-                item is not Avalonia.Controls.DataGridHierarchical.HierarchicalNode)
-            {
-                var hierarchicalIndex = _hierarchicalModel.IndexOf(item);
-                if (hierarchicalIndex >= 0)
-                {
-                    return hierarchicalIndex;
-                }
-            }
-
-            if (TryGetSelectionSourceIndexOfItem(item, out var selectionSourceIndex))
-            {
-                return selectionSourceIndex;
-            }
-
-            if (DataConnection.CollectionView is DataGridCollectionView paged && paged.PageSize > 0)
-            {
-                var referenceIndex = paged.GetGlobalReferenceIndexOf(item);
-                return referenceIndex >= 0 ? referenceIndex : paged.GetGlobalIndexOf(item);
-            }
-
-            return DataConnection.IndexOf(item);
-        }
-
-        private void ClearPendingHierarchicalSelection()
-        {
-            _pendingHierarchicalSelectionSnapshot = null;
-            _pendingHierarchicalSelectionIndexes = null;
-        }
-
-        internal void ClearInvalidSelectionIndexes()
-        {
-            if (_selectionModelAdapter?.Model is not { } model)
-            {
-                return;
-            }
-
-            if (!HasInvalidSelectionIndexes(model))
-            {
-                return;
-            }
-
-            var selected = model.SelectedIndexes;
-            if (selected == null || selected.Count == 0)
-            {
-                return;
-            }
-
-            var count = GetSelectionSourceCount(model);
-            var valid = new List<int>();
-            foreach (var index in selected)
-            {
-                if (index >= 0 && index < count)
-                {
-                    valid.Add(index);
-                }
-            }
-
-            using (model.BatchUpdate())
-            {
-                model.Clear();
-                foreach (var index in valid)
-                {
-                    model.Select(index);
-                }
-            }
-        }
-
-        private static bool HasInvalidSelectionIndexes(ISelectionModel model)
-        {
-            if (model == null)
-            {
-                return false;
-            }
-
-            if (model.Source == null)
-            {
-                return false;
-            }
-
-            var selected = model.SelectedIndexes;
-            if (selected == null || selected.Count == 0)
-            {
-                return false;
-            }
-
-            var count = GetSelectionSourceCount(model);
-            foreach (var index in selected)
-            {
-                if (index < 0 || index >= count)
-                {
-                    return true;
-                }
-            }
-
-            return false;
-        }
-
-        private static int GetSelectionSourceCount(ISelectionModel model)
-        {
-            if (model.Source is IList list)
-            {
-                return list.Count;
-            }
-
-            if (model.Source is ICollection collection)
-            {
-                return collection.Count;
-            }
-
-            var count = 0;
-            if (model.Source is IEnumerable enumerable)
-            {
-                foreach (var _ in enumerable)
-                {
-                    count++;
-                }
-            }
-
-            return count;
         }
 
         private bool TryGetRowIndexFromItem(object? item, out int rowIndex)
@@ -6196,348 +5648,6 @@ internal
             return rowIndex >= 0;
         }
 
-        private bool TryGetSelectionSource(out DataGridSelectionSource source)
-        {
-            source = _selectionSource;
-            return source != null &&
-                DataConnection?.CollectionView is DataGridCollectionView view &&
-                ReferenceEquals(_selectionSourceView, view);
-        }
-
-        private bool TryGetSelectionSourceItem(int index, out object item)
-        {
-            item = null;
-            if (!TryGetSelectionSource(out var source) || index < 0 || index >= source.Count)
-            {
-                return false;
-            }
-
-            item = source[index];
-            return true;
-        }
-
-        private bool TryGetSelectionSourceIndexOfItem(object item, out int index)
-        {
-            index = -1;
-            return TryGetSelectionSource(out var source) &&
-                source.TryGetReferenceIndex(item, out index);
-        }
-
-        private bool TryGetSelectionSourceIndexFromRowIndex(int rowIndex, out int index)
-        {
-            index = -1;
-            if (!TryGetSelectionSource(out var source) || DataConnection == null || rowIndex < 0 || rowIndex >= DataConnection.Count)
-            {
-                return false;
-            }
-
-            var item = DataConnection.GetDataItem(rowIndex);
-            return item != null && source.TryGetReferenceIndex(item, out index);
-        }
-
-        private int GetSelectionIndexFromRowIndex(int rowIndex)
-        {
-            if (rowIndex < 0)
-            {
-                return -1;
-            }
-
-            if (TryGetPagingInfo(out var pagedView, out var pageStart))
-            {
-                if (rowIndex >= pagedView.Count)
-                {
-                    return -1;
-                }
-
-                return pageStart + rowIndex;
-            }
-
-            if (TryGetSelectionSourceIndexFromRowIndex(rowIndex, out var selectionSourceIndex))
-            {
-                return selectionSourceIndex;
-            }
-
-            return rowIndex;
-        }
-
-        internal bool PushSelectionSync()
-        {
-            var previous = _syncingSelectionModel;
-            _syncingSelectionModel = true;
-            return previous;
-        }
-
-        internal void PopSelectionSync(bool previous)
-        {
-            _syncingSelectionModel = previous;
-        }
-
-        private sealed class HierarchicalSelectionProxy : ISelectionModel
-        {
-            private readonly ISelectionModel _inner;
-            private readonly Func<object?, object?> _itemSelector;
-            private readonly Func<object?, int> _indexResolver;
-            private EventHandler<SelectionModelIndexesChangedEventArgs>? _indexesChanged;
-            private EventHandler<SelectionModelSelectionChangedEventArgs>? _selectionChanged;
-            private EventHandler? _lostSelection;
-            private EventHandler? _sourceReset;
-            private PropertyChangedEventHandler? _propertyChanged;
-            private bool _lastSelectionEmpty;
-
-            public HierarchicalSelectionProxy(
-                ISelectionModel inner,
-                Func<object?, object?> itemSelector,
-                Func<object?, int> indexResolver)
-            {
-                _inner = inner ?? throw new ArgumentNullException(nameof(inner));
-                _itemSelector = itemSelector ?? throw new ArgumentNullException(nameof(itemSelector));
-                _indexResolver = indexResolver ?? throw new ArgumentNullException(nameof(indexResolver));
-                _lastSelectionEmpty = inner.SelectedIndexes.Count == 0;
-            }
-
-            public IEnumerable? Source
-            {
-                get => _inner.Source;
-                set => _inner.Source = value;
-            }
-
-            public bool SingleSelect
-            {
-                get => _inner.SingleSelect;
-                set => _inner.SingleSelect = value;
-            }
-
-            public int SelectedIndex
-            {
-                get => _inner.SelectedIndex;
-                set => _inner.SelectedIndex = value;
-            }
-
-            public IReadOnlyList<int> SelectedIndexes => _inner.SelectedIndexes;
-
-            public object? SelectedItem
-            {
-                get => _itemSelector(_inner.SelectedItem);
-                set
-                {
-                    if (value != null)
-                    {
-                        var resolved = _indexResolver(value);
-                        if (resolved >= 0)
-                        {
-                            _inner.SelectedIndex = resolved;
-                            return;
-                        }
-                    }
-
-                    _inner.SelectedItem = value;
-                }
-            }
-
-            public IReadOnlyList<object?> SelectedItems =>
-                new ProjectedReadOnlyList(_inner.SelectedItems, _itemSelector);
-
-            public int AnchorIndex
-            {
-                get => _inner.AnchorIndex;
-                set => _inner.AnchorIndex = value;
-            }
-
-            public int Count => _inner.Count;
-
-            public event EventHandler<SelectionModelIndexesChangedEventArgs>? IndexesChanged
-            {
-                add
-                {
-                    if (_indexesChanged == null)
-                    {
-                        _inner.IndexesChanged += InnerIndexesChanged;
-                    }
-                    _indexesChanged += value;
-                }
-                remove
-                {
-                    _indexesChanged -= value;
-                    if (_indexesChanged == null)
-                    {
-                        _inner.IndexesChanged -= InnerIndexesChanged;
-                    }
-                }
-            }
-
-            public event EventHandler<SelectionModelSelectionChangedEventArgs>? SelectionChanged
-            {
-                add
-                {
-                    if (_selectionChanged == null)
-                    {
-                        _inner.SelectionChanged += InnerSelectionChanged;
-                    }
-                    _selectionChanged += value;
-                }
-                remove
-                {
-                    _selectionChanged -= value;
-                    if (_selectionChanged == null)
-                    {
-                        _inner.SelectionChanged -= InnerSelectionChanged;
-                    }
-                }
-            }
-
-            public event EventHandler? LostSelection
-            {
-                add
-                {
-                    if (_lostSelection == null)
-                    {
-                        _inner.LostSelection += InnerLostSelection;
-                    }
-                    _lostSelection += value;
-                }
-                remove
-                {
-                    _lostSelection -= value;
-                    if (_lostSelection == null)
-                    {
-                        _inner.LostSelection -= InnerLostSelection;
-                    }
-                }
-            }
-
-            public event EventHandler? SourceReset
-            {
-                add
-                {
-                    if (_sourceReset == null)
-                    {
-                        _inner.SourceReset += InnerSourceReset;
-                    }
-                    _sourceReset += value;
-                }
-                remove
-                {
-                    _sourceReset -= value;
-                    if (_sourceReset == null)
-                    {
-                        _inner.SourceReset -= InnerSourceReset;
-                    }
-                }
-            }
-
-            public event PropertyChangedEventHandler? PropertyChanged
-            {
-                add
-                {
-                    if (_propertyChanged == null)
-                    {
-                        _inner.PropertyChanged += InnerPropertyChanged;
-                    }
-                    _propertyChanged += value;
-                }
-                remove
-                {
-                    _propertyChanged -= value;
-                    if (_propertyChanged == null)
-                    {
-                        _inner.PropertyChanged -= InnerPropertyChanged;
-                    }
-                }
-            }
-
-            public void BeginBatchUpdate() => _inner.BeginBatchUpdate();
-
-            public void EndBatchUpdate() => _inner.EndBatchUpdate();
-
-            public bool IsSelected(int index) => _inner.IsSelected(index);
-
-            public void Select(int index) => _inner.Select(index);
-
-            public void Deselect(int index) => _inner.Deselect(index);
-
-            public void SelectRange(int start, int end) => _inner.SelectRange(start, end);
-
-            public void DeselectRange(int start, int end) => _inner.DeselectRange(start, end);
-
-            public void SelectAll() => _inner.SelectAll();
-
-            public void Clear() => _inner.Clear();
-
-            private void InnerIndexesChanged(object? sender, SelectionModelIndexesChangedEventArgs e)
-            {
-                _indexesChanged?.Invoke(this, e);
-                _lastSelectionEmpty = _inner.SelectedIndexes.Count == 0;
-            }
-
-            private void InnerSelectionChanged(object? sender, SelectionModelSelectionChangedEventArgs e)
-            {
-                if (_selectionChanged != null)
-                {
-                    var projected = new SelectionModelSelectionChangedEventArgs<object>(
-                        e.DeselectedIndexes,
-                        e.SelectedIndexes,
-                        ProjectSelectionItems(e.DeselectedItems),
-                        ProjectSelectionItems(e.SelectedItems));
-                    _selectionChanged.Invoke(this, projected);
-                }
-                _lastSelectionEmpty = _inner.SelectedIndexes.Count == 0;
-            }
-
-            private void InnerLostSelection(object? sender, EventArgs e)
-            {
-                var isEmpty = _inner.SelectedIndexes.Count == 0;
-                if (!_lastSelectionEmpty && isEmpty)
-                {
-                    _lostSelection?.Invoke(this, e);
-                }
-
-                _lastSelectionEmpty = isEmpty;
-            }
-
-            private void InnerSourceReset(object? sender, EventArgs e)
-            {
-                _sourceReset?.Invoke(this, e);
-                _lastSelectionEmpty = _inner.SelectedIndexes.Count == 0;
-            }
-
-            private void InnerPropertyChanged(object? sender, PropertyChangedEventArgs e)
-            {
-                _propertyChanged?.Invoke(this, e);
-            }
-
-            private IReadOnlyList<object?> ProjectSelectionItems(IReadOnlyList<object?> items)
-            {
-                return items.Count == 0
-                    ? Array.Empty<object?>()
-                    : new ProjectedReadOnlyList(items, _itemSelector);
-            }
-
-            private sealed class ProjectedReadOnlyList : IReadOnlyList<object?>
-            {
-                private readonly IReadOnlyList<object?> _inner;
-                private readonly Func<object?, object?> _selector;
-
-                public ProjectedReadOnlyList(IReadOnlyList<object?> inner, Func<object?, object?> selector)
-                {
-                    _inner = inner ?? throw new ArgumentNullException(nameof(inner));
-                    _selector = selector ?? throw new ArgumentNullException(nameof(selector));
-                }
-
-                public object? this[int index] => _selector(_inner[index]);
-
-                public int Count => _inner.Count;
-
-                public IEnumerator<object?> GetEnumerator()
-                {
-                    foreach (var item in _inner)
-                    {
-                        yield return _selector(item);
-                    }
-                }
-
-                IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
-            }
-        }
 
         private void RemoveDisplayedColumnHeader(DataGridColumn dataGridColumn)
         {

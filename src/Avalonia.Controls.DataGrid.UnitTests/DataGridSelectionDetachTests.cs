@@ -5,6 +5,7 @@ using System;
 using System.Collections.ObjectModel;
 using System.Linq;
 using Avalonia.Controls;
+using Avalonia.Controls.DataGridSelection;
 using Avalonia.Controls.Selection;
 using Avalonia.Data;
 using Avalonia.Headless.XUnit;
@@ -21,7 +22,7 @@ public class DataGridSelectionDetachTests
         var items = new ObservableCollection<SelectionItem>(
             Enumerable.Range(1, 100).Select(i => new SelectionItem { Name = $"Item {i:000}" }));
 
-        var selectionModel = new SelectionModel<object?>();
+        var selectionModel = new DataGridSelectionModel<object?>();
 
         var grid = new DataGrid
         {
@@ -83,9 +84,9 @@ public class DataGridSelectionDetachTests
 
                 SelectionSource.AssertTracksView(grid, selectionModel);
 
-                selectionModel.Select(0);
-                selectionModel.Select(1);
-                selectionModel.Select(2);
+                selectionModel.SelectAt(0);
+                selectionModel.SelectAt(1);
+                selectionModel.SelectAt(2);
 
                 Dispatcher.UIThread.RunJobs();
                 window.UpdateLayout();
@@ -110,7 +111,7 @@ public class DataGridSelectionDetachTests
         var items = new ObservableCollection<SelectionItem>(
             Enumerable.Range(1, 100).Select(i => new SelectionItem { Name = $"Item {i:000}" }));
 
-        var selectionModel = new SelectionModel<object?>();
+        var selectionModel = new DataGridSelectionModel<object?>();
 
         var grid = new DataGrid
         {
@@ -172,8 +173,8 @@ public class DataGridSelectionDetachTests
 
                 SelectionSource.AssertTracksView(grid, selectionModel);
 
-                selectionModel.Select(0);
-                selectionModel.Select(1);
+                selectionModel.SelectAt(0);
+                selectionModel.SelectAt(1);
 
                 Dispatcher.UIThread.RunJobs();
                 window.UpdateLayout();

@@ -14,6 +14,7 @@ using Avalonia.Controls.DataGridFiltering;
 using Avalonia.Controls.DataGridHierarchical;
 using Avalonia.Controls.DataGridSearching;
 using Avalonia.Controls.DataGridSorting;
+using Avalonia.Controls.DataGridSelection;
 using Avalonia.Controls.Selection;
 using Avalonia.Data;
 using Avalonia.Headless.XUnit;
@@ -78,7 +79,7 @@ public class DataGridAttachDetachModelTests
         model.SetRoot(root);
         model.ExpandAll();
 
-        var selection = new SelectionModel<HierarchicalNode> { SingleSelect = true };
+        var selection = new DataGridSelectionModel<TreeItem> { SingleSelect = true };
 
         var grid = new DataGrid
         {
@@ -280,7 +281,7 @@ public class DataGridAttachDetachModelTests
         model.SetRoot(root);
         model.ExpandAll();
 
-        var selection = new SelectionModel<HierarchicalNode> { SingleSelect = true };
+        var selection = new DataGridSelectionModel<TreeItem> { SingleSelect = true };
 
         var grid = new DataGrid
         {
@@ -426,7 +427,7 @@ public class DataGridAttachDetachModelTests
             new("Gamma")
         };
 
-        var selection = new SelectionModel<object?> { SingleSelect = true };
+        var selection = new DataGridSelectionModel<object?> { SingleSelect = true };
         var grid = CreateBasicGrid(items);
         grid.Selection = selection;
         grid.SelectionMode = DataGridSelectionMode.Single;
@@ -469,7 +470,7 @@ public class DataGridAttachDetachModelTests
         model.SetRoot(root);
         model.ExpandAll();
 
-        var selection = new SelectionModel<HierarchicalNode> { SingleSelect = false };
+        var selection = new DataGridSelectionModel<TreeItem> { SingleSelect = false };
 
         var grid = new DataGrid
         {
@@ -526,7 +527,7 @@ public class DataGridAttachDetachModelTests
         model.SetRoot(root);
         model.ExpandAll();
 
-        var selection = new SelectionModel<HierarchicalNode> { SingleSelect = false };
+        var selection = new DataGridSelectionModel<TreeItem> { SingleSelect = false };
 
         var grid = new DataGrid
         {
@@ -575,7 +576,7 @@ public class DataGridAttachDetachModelTests
             new("Gamma")
         };
 
-        var selection = new SelectionModel<object?> { SingleSelect = true };
+        var selection = new DataGridSelectionModel<object?> { SingleSelect = true };
         var grid = CreateBasicGrid(items);
         grid.Selection = selection;
         grid.SelectionMode = DataGridSelectionMode.Single;
@@ -609,7 +610,7 @@ public class DataGridAttachDetachModelTests
             new("Gamma")
         };
 
-        var selection = new SelectionModel<object?> { SingleSelect = false };
+        var selection = new DataGridSelectionModel<object?> { SingleSelect = false };
         var grid = CreateBasicGrid(items);
         grid.Selection = selection;
         grid.SelectionMode = DataGridSelectionMode.Extended;
@@ -643,7 +644,7 @@ public class DataGridAttachDetachModelTests
             new("Gamma")
         };
 
-        var selection = new SelectionModel<object?> { SingleSelect = false };
+        var selection = new DataGridSelectionModel<object?> { SingleSelect = false };
         var grid = CreateBasicGrid(items);
         grid.Selection = selection;
         grid.SelectionMode = DataGridSelectionMode.Extended;
@@ -675,7 +676,7 @@ public class DataGridAttachDetachModelTests
             new("Gamma")
         };
 
-        var selection = new SelectionModel<object?> { SingleSelect = true };
+        var selection = new DataGridSelectionModel<object?> { SingleSelect = true };
         var grid = CreateBasicGrid(items);
         grid.Selection = selection;
         grid.SelectionMode = DataGridSelectionMode.Single;
@@ -719,7 +720,7 @@ public class DataGridAttachDetachModelTests
         model.SetRoot(root);
         model.ExpandAll();
 
-        var selection = new SelectionModel<HierarchicalNode> { SingleSelect = true };
+        var selection = new DataGridSelectionModel<TreeItem> { SingleSelect = true };
 
         var grid = new DataGrid
         {
@@ -747,7 +748,10 @@ public class DataGridAttachDetachModelTests
         Dispatcher.UIThread.RunJobs();
 
         selection.Clear();
-        selection.Select(model.IndexOf(childB));
+        // SelectAt, not Select: Select takes the item, so handing it an index selects the boxed
+        // integer - which is not in the view, so nothing at all gets selected and the test would
+        // fail having silently done nothing.
+        selection.SelectAt(model.IndexOf(childB));
         Dispatcher.UIThread.RunJobs();
 
         window.Content = grid;
@@ -769,7 +773,7 @@ public class DataGridAttachDetachModelTests
             new("Gamma")
         };
 
-        var selection = new SelectionModel<object?> { SingleSelect = true };
+        var selection = new DataGridSelectionModel<object?> { SingleSelect = true };
         var grid = CreateBasicGrid(items);
         grid.Selection = selection;
         grid.SelectionMode = DataGridSelectionMode.Single;
@@ -779,13 +783,17 @@ public class DataGridAttachDetachModelTests
         grid.SelectedItem = items[0];
         Dispatcher.UIThread.RunJobs();
 
-        SelectionModelSelectionChangedEventArgs<object?>? args = null;
+        DataGridSelectionModelChangedEventArgs<object?>? args = null;
         selection.SelectionChanged += (_, e) => args = e;
 
         window.Content = null;
         Dispatcher.UIThread.RunJobs();
 
-        selection.Select(1);
+        // Leaving the visual tree does not take the items away, so the model can still resolve an
+        // index against them.
+        Assert.Equal(items.Count, selection.View?.Count);
+
+        selection.SelectAt(1);
         Dispatcher.UIThread.RunJobs();
 
         var captured = args ?? throw new InvalidOperationException("Expected selection change.");
@@ -815,7 +823,7 @@ public class DataGridAttachDetachModelTests
         model.SetRoot(root);
         model.ExpandAll();
 
-        var selection = new SelectionModel<HierarchicalNode> { SingleSelect = true };
+        var selection = new DataGridSelectionModel<TreeItem> { SingleSelect = true };
 
         var grid = new DataGrid
         {
@@ -839,22 +847,18 @@ public class DataGridAttachDetachModelTests
         InvokeMouseSelection(grid, model, childA);
         Dispatcher.UIThread.RunJobs();
 
-        SelectionModelSelectionChangedEventArgs<HierarchicalNode>? args = null;
+        DataGridSelectionModelChangedEventArgs<TreeItem>? args = null;
         selection.SelectionChanged += (_, e) => args = e;
 
         window.Content = null;
         Dispatcher.UIThread.RunJobs();
 
-        selection.Select(model.IndexOf(childB));
+        selection.Select(childB);
         Dispatcher.UIThread.RunJobs();
 
         var captured = args ?? throw new InvalidOperationException("Expected selection change.");
-        Assert.Single(captured.SelectedItems);
-        var selected = captured.SelectedItems[0] ?? throw new InvalidOperationException("Expected selected item.");
-        Assert.Same(childB, selected.Item);
-        Assert.Single(captured.DeselectedItems);
-        var deselected = captured.DeselectedItems[0] ?? throw new InvalidOperationException("Expected deselected item.");
-        Assert.Same(childA, deselected.Item);
+        Assert.Same(childB, Assert.Single(captured.SelectedItems));
+        Assert.Same(childA, Assert.Single(captured.DeselectedItems));
 
         window.Close();
     }
@@ -868,7 +872,7 @@ public class DataGridAttachDetachModelTests
             new("Beta")
         };
 
-        var selection = new SelectionModel<object?>();
+        var selection = new DataGridSelectionModel<object?>();
         var grid = CreateBasicGrid(items);
         grid.SelectionMode = DataGridSelectionMode.Extended;
         grid.Selection = selection;
@@ -877,12 +881,6 @@ public class DataGridAttachDetachModelTests
 
         grid.SelectedItem = items[0];
         Dispatcher.UIThread.RunJobs();
-
-        Assert.Single(selection.SelectedItems);
-
-        var previousSync = grid.PushSelectionSync();
-        grid.ClearRowSelection(resetAnchorSlot: true);
-        grid.PopSelectionSync(previousSync);
 
         Assert.Single(selection.SelectedItems);
 
@@ -902,7 +900,7 @@ public class DataGridAttachDetachModelTests
             new("Beta")
         };
 
-        var selection = new SelectionModel<object?>();
+        var selection = new DataGridSelectionModel<object?>();
         var grid = CreateBasicGrid(items);
         grid.SelectionMode = DataGridSelectionMode.Extended;
         grid.Selection = selection;
@@ -911,12 +909,6 @@ public class DataGridAttachDetachModelTests
 
         grid.SelectedItem = items[0];
         Dispatcher.UIThread.RunJobs();
-
-        Assert.Single(selection.SelectedItems);
-
-        var previousSync = grid.PushSelectionSync();
-        grid.ClearRowSelection(resetAnchorSlot: true);
-        grid.PopSelectionSync(previousSync);
 
         Assert.Single(selection.SelectedItems);
 
@@ -1012,9 +1004,10 @@ public class DataGridAttachDetachModelTests
         return new PointerPressedEventArgs(target, pointer, target, new Point(0, 0), 0, properties, KeyModifiers.None);
     }
 
-    private static void AssertSelection(SelectionModel<HierarchicalNode> selection, TreeItem expected)
+    // Hierarchical rows put the caller's item into the selection, not the node wrapping it, so there
+    // is nothing to unwrap here any more.
+    private static void AssertSelection(DataGridSelectionModel<TreeItem> selection, TreeItem expected)
     {
-        var node = Assert.IsType<HierarchicalNode>(Assert.Single(selection.SelectedItems));
-        Assert.Same(expected, node.Item);
+        Assert.Same(expected, Assert.Single(selection.SelectedItems));
     }
 }
