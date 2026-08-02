@@ -168,15 +168,20 @@ internal
 
 
         /// <summary>
-        /// Membership test for the underlying data, ignoring whether the current filter or page lets an
-        /// item through, so that filtering or paging a selected row out of sight hides it rather than
-        /// deselecting it.
+        /// Membership test for the underlying data, ignoring whether the current filter, page or
+        /// expansion state lets an item through, so that a selected row taken out of sight is hidden
+        /// rather than deselected.
         /// </summary>
+        /// <remarks>
+        /// Each view answers this itself, because only it knows what its source holds beyond what it
+        /// shows. Falling back to <see cref="DataGridSelection.IDataGridSelectionView.IndexOf"/> for a
+        /// view that does not is a last resort and reads hidden as removed.
+        /// </remarks>
         private Func<object, bool> SnapshotSelectionSourceMembership()
         {
-            if (_selectionView is DataGridSelection.DataGridCollectionViewSelectionView collectionSource)
+            if (_selectionView is DataGridSelection.IDataGridSelectionSourceMembership source)
             {
-                var contains = collectionSource.SnapshotSourceMembership();
+                var contains = source.SnapshotSourceMembership();
                 return item => contains(item);
             }
 

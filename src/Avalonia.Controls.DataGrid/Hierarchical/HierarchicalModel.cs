@@ -25,6 +25,23 @@ namespace Avalonia.Controls.DataGridHierarchical
     #else
     internal
     #endif
+    enum FlattenedChangeKind
+    {
+        /// <summary>Rows left the list, joined it, or both, at one position.</summary>
+        Splice,
+
+        /// <summary>Rows gave up their positions to the rows named in <see cref="FlattenedChange.Replacements"/>.</summary>
+        Replace,
+
+        /// <summary>A run of rows changed position. None left the list and none joined it.</summary>
+        Move
+    }
+
+    #if !DATAGRID_INTERNAL
+    public
+    #else
+    internal
+    #endif
     sealed class FlattenedChange
     {
         public FlattenedChange(
@@ -52,13 +69,106 @@ namespace Avalonia.Controls.DataGridHierarchical
             OldCount = oldCount;
             NewCount = newCount;
             Replacements = replacements ?? Array.Empty<FlattenedReplacement>();
+            Kind = Replacements.Count > 0 ? FlattenedChangeKind.Replace : FlattenedChangeKind.Splice;
+            MovedFromIndex = -1;
         }
 
+        private FlattenedChange(int fromIndex, int toIndex, int count)
+        {
+            if (fromIndex < 0)
+            {
+                throw new ArgumentOutOfRangeException(nameof(fromIndex));
+            }
+
+            if (toIndex < 0)
+            {
+                throw new ArgumentOutOfRangeException(nameof(toIndex));
+            }
+
+            if (count <= 0)
+            {
+                throw new ArgumentOutOfRangeException(nameof(count));
+            }
+
+            Kind = FlattenedChangeKind.Move;
+            MovedFromIndex = fromIndex;
+            Index = toIndex;
+
+            // A move takes nothing out and puts nothing in. Stating the run's size on both sides
+            // keeps the count arithmetic every consumer already does (NewCount - OldCount) coming
+            // out at zero, which is the truth about a move.
+            OldCount = count;
+            NewCount = count;
+            Replacements = Array.Empty<FlattenedReplacement>();
+        }
+
+        /// <summary>
+        /// A run of <paramref name="count"/> rows relocated from <paramref name="fromIndex"/> to
+        /// <paramref name="toIndex"/>.
+        /// </summary>
+        /// <remarks>
+        /// <paramref name="toIndex"/> is where the run sits in the resulting list, following the
+        /// convention of <see cref="System.Collections.ObjectModel.ObservableCollection{T}.Move"/>
+        /// and <see cref="System.Collections.Specialized.NotifyCollectionChangedEventArgs"/>.
+        /// </remarks>
+        public static FlattenedChange Move(int fromIndex, int toIndex, int count)
+            => new FlattenedChange(fromIndex, toIndex, count);
+
+        /// <summary>
+        /// What this change did. Consumers should switch on it rather than deduce it from the
+        /// counts: a move and a replacement both leave the row count alone, and a replacement is
+        /// shaped exactly like a removal followed by an insertion.
+        /// </summary>
+        public FlattenedChangeKind Kind { get; }
+
+        /// <summary>
+        /// For a <see cref="FlattenedChangeKind.Move"/>, where the run started out. -1 otherwise.
+        /// </summary>
+        public int MovedFromIndex { get; }
+
+        /// <summary>
+        /// Where the change applies. For a move this is the run's position afterwards; see
+        /// <see cref="MovedFromIndex"/> for where it came from.
+        /// </summary>
         public int Index { get; }
 
         public int OldCount { get; }
 
         public int NewCount { get; }
+
+        /// <summary>
+        /// Where the row at <paramref name="oldIndex"/> ends up once this move has been applied.
+        /// Positions outside the span the run travels over are not affected by it.
+        /// </summary>
+        /// <remarks>
+        /// Relocating a run rotates the span between its old and new position; everything outside
+        /// that span keeps its index. Only meaningful for <see cref="FlattenedChangeKind.Move"/>.
+        /// </remarks>
+        public int MapMovedIndex(int oldIndex)
+        {
+            if (Kind != FlattenedChangeKind.Move)
+            {
+                return oldIndex;
+            }
+
+            var from = MovedFromIndex;
+            var to = Index;
+            var count = OldCount;
+
+            var lo = Math.Min(from, to);
+            var hi = Math.Max(from, to) + count - 1;
+            if (oldIndex < lo || oldIndex > hi)
+            {
+                return oldIndex;
+            }
+
+            if (to > from)
+            {
+                return oldIndex < from + count ? oldIndex + (to - from) : oldIndex - count;
+            }
+
+            return oldIndex < from ? oldIndex + count : oldIndex - (from - to);
+        }
 
         /// <summary>
         /// The nodes this change swapped out, each paired with the node that took its place.
@@ -154,6 +264,14 @@ namespace Avalonia.Controls.DataGridHierarchical
 
             foreach (var change in _changes)
             {
+                if (change.Kind == FlattenedChangeKind.Move)
+                {
+                    // A move removes nothing, so no index is lost to it and the splice arithmetic
+                    // below does not apply - the run and everything it travelled over is permuted.
+                    current = change.MapMovedIndex(current);
+                    continue;
+                }
+
                 if (current < change.Index)
                 {
                     continue;
@@ -524,6 +642,31 @@ namespace Avalonia.Controls.DataGridHierarchical
     }
 
     /// <summary>
+    /// Optional interface for models that can say whether an item is anywhere in the hierarchy, as
+    /// opposed to whether it is currently on screen.
+    /// </summary>
+    #if !DATAGRID_INTERNAL
+    public
+    #else
+    internal
+    #endif
+    interface IHierarchicalItemMembership
+    {
+        /// <summary>
+        /// Snapshots the items the hierarchy holds, collapsed branches included, as a predicate the
+        /// caller applies to many items without walking the tree again.
+        /// </summary>
+        /// <remarks>
+        /// <see cref="IHierarchicalModel.IndexOf(object)"/> answers a different question: it reports a
+        /// position in the flattened list, which makes an item a collapsed parent hides
+        /// indistinguishable from one that was removed. A branch whose children are not materialized
+        /// cannot be enumerated at all, and nothing can be ruled out of it, so the predicate keeps the
+        /// items it cannot account for rather than declaring them gone.
+        /// </remarks>
+        Func<object?, bool> SnapshotItemMembership();
+    }
+
+    /// <summary>
     /// Factory hook to allow replacing the default hierarchical model.
     /// </summary>
     #if !DATAGRID_INTERNAL
@@ -545,7 +688,7 @@ namespace Avalonia.Controls.DataGridHierarchical
     #else
     internal
     #endif
-    class HierarchicalModel : IHierarchicalModel, IHierarchicalModelExpander, IHierarchicalStateProviderWithKeyMode
+    class HierarchicalModel : IHierarchicalModel, IHierarchicalModelExpander, IHierarchicalItemMembership, IHierarchicalStateProviderWithKeyMode
     {
         private readonly ObservableRangeCollection<HierarchicalNode> _flattened;
         private readonly ReadOnlyObservableCollection<HierarchicalNode> _flattenedObservableView;
@@ -1382,6 +1525,59 @@ namespace Avalonia.Controls.DataGridHierarchical
             }
 
             return null;
+        }
+
+        /// <inheritdoc />
+        public Func<object?, bool> SnapshotItemMembership()
+        {
+            // Two sets for the same reason the flattened lookup keeps two dictionaries: an item is
+            // matched by reference or by equality, and a type whose Equals disagrees with either must
+            // not fall through the gap.
+            var byReference = new HashSet<object>(ReferenceEqualityComparer.Instance);
+            var byEquality = new HashSet<object>();
+            var enumerable = true;
+
+            if (Root != null)
+            {
+                CollectItems(Root, byReference, byEquality, ref enumerable);
+            }
+
+            // Captured by value: what the walk concluded, not a field a later expansion could move
+            // under a caller still holding the predicate.
+            var complete = enumerable;
+            return item => item != null
+                && (byReference.Contains(item) || byEquality.Contains(item) || !complete);
+        }
+
+        private void CollectItems(
+            HierarchicalNode node,
+            HashSet<object> byReference,
+            HashSet<object> byEquality,
+            ref bool enumerable)
+        {
+            if (!IsVirtualRootNode(node))
+            {
+                byReference.Add(node.Item);
+                byEquality.Add(node.Item);
+            }
+
+            if (node.IsLeaf)
+            {
+                return;
+            }
+
+            if (!node.HasMaterializedChildren)
+            {
+                // Children were never built, or were dropped when the branch collapsed. Nothing under
+                // here can be listed, so from this point on the snapshot can no longer prove absence.
+                enumerable = false;
+                return;
+            }
+
+            foreach (var child in node.Children)
+            {
+                CollectItems(child, byReference, byEquality, ref enumerable);
+            }
         }
 
         private void EnsureFlattenedLookup()
@@ -2583,12 +2779,12 @@ namespace Avalonia.Controls.DataGridHierarchical
                 removeOffset = GetVisibleOffsetForChildIndex(parent, moveIndex);
             }
             var movedNodes = parent.MutableChildren.GetRange(moveIndex, moveCount);
-            parent.MutableChildren.RemoveRange(moveIndex, moveCount);
-
             var removedVisible = expandedAndVisible ? movedNodes.Sum(GetVisibleVisibleCount) : 0;
 
-            var insertIndex = Math.Min(Math.Max(0, targetIndex), parent.MutableChildren.Count);
-            parent.MutableChildren.InsertRange(insertIndex, movedNodes);
+            // The children are relocated, not taken out and put back. Rotating the span the run
+            // travels over leaves every other child's position alone, which is what a move means.
+            var insertIndex = Math.Min(Math.Max(0, targetIndex), parent.MutableChildren.Count - moveCount);
+            RotateRange(parent.MutableChildren, moveIndex, insertIndex, moveCount);
 
             if (expandedAndVisible)
             {
@@ -2596,39 +2792,64 @@ namespace Avalonia.Controls.DataGridHierarchical
                     ? removeOffset
                     : parentIndex + 1 + removeOffset;
 
-                IList<HierarchicalNode>? visibleNodes = null;
-                if (removedVisible > 0)
-                {
-                    visibleNodes = _flattened.GetRange(removedAt, removedVisible);
-                    _flattened.RemoveRange(removedAt, removedVisible);
-                }
-
                 var insertOffset = GetVisibleOffsetForChildIndex(parent, insertIndex);
                 var insertAt = isVirtualRootParent
                     ? insertOffset
                     : parentIndex + 1 + insertOffset;
 
-                if (visibleNodes != null && visibleNodes.Count > 0)
+                if (removedVisible > 0 && insertAt != removedAt)
                 {
-                    _flattened.InsertRange(insertAt, visibleNodes);
+                    // One move, not a removal followed by an insertion. The two would end in the
+                    // same arrangement, but they would tell every consumer that these rows left the
+                    // list and different ones arrived - and anything keyed on the rows themselves,
+                    // selection above all, would have nothing left to key on. The index map that
+                    // used to be handed out alongside the pair existed only to undo that damage.
+                    _flattened.MoveRange(removedAt, insertAt, removedVisible);
+                    OnFlattenedChanged(new[] { FlattenedChange.Move(removedAt, insertAt, removedVisible) });
                 }
-
-                var insertedVisible = visibleNodes?.Count ?? 0;
-                var indexMap = new Dictionary<int, int>();
-
-                for (int i = 0; i < insertedVisible; i++)
-                {
-                    indexMap[removedAt + i] = insertAt + i;
-                }
-
-                OnFlattenedChanged(new[]
-                {
-                    new FlattenedChange(removedAt, removedVisible, 0),
-                    new FlattenedChange(insertAt, 0, insertedVisible)
-                }, indexMap.Count > 0 ? indexMap : null);
             }
 
             OnHierarchyChanged(parent, NotifyCollectionChangedAction.Move);
+        }
+
+        /// <summary>
+        /// Relocates a run of <paramref name="count"/> items within <paramref name="list"/> so that
+        /// it starts at <paramref name="newIndex"/>.
+        /// </summary>
+        /// <remarks>
+        /// The in-place counterpart of <see cref="ObservableRangeCollection{T}.MoveRange"/>, for the
+        /// plain lists the model keeps its children in. Same reason: a move is a rotation of the span
+        /// the run travels over, and writing it as a removal and an insertion invites the two halves
+        /// to drift apart.
+        /// </remarks>
+        private static void RotateRange<T>(List<T> list, int oldIndex, int newIndex, int count)
+        {
+            if (count <= 0 || oldIndex == newIndex)
+            {
+                return;
+            }
+
+            var moved = list.GetRange(oldIndex, count);
+
+            if (newIndex > oldIndex)
+            {
+                for (var i = 0; i < newIndex - oldIndex; i++)
+                {
+                    list[oldIndex + i] = list[oldIndex + count + i];
+                }
+            }
+            else
+            {
+                for (var i = oldIndex - newIndex - 1; i >= 0; i--)
+                {
+                    list[newIndex + count + i] = list[newIndex + i];
+                }
+            }
+
+            for (var i = 0; i < count; i++)
+            {
+                list[newIndex + i] = moved[i];
+            }
         }
 
         private void InitializeNode(HierarchicalNode node)
@@ -3750,18 +3971,44 @@ namespace Avalonia.Controls.DataGridHierarchical
             }
         }
 
-        private sealed class ReadOnlyListWrapper<T> : IReadOnlyList<T>
+        /// <summary>
+        /// Read-only view over a live list, passing on what the list says about itself.
+        /// </summary>
+        /// <remarks>
+        /// The wrapper used to expose the contents and nothing else. Anything built on
+        /// <see cref="Flattened"/> - a <see cref="Avalonia.Collections.DataGridCollectionView"/> over
+        /// it, most of all - could therefore only ever discover that something had changed by noticing
+        /// its own contents no longer matched, and had to treat every change as a wholesale reset. A
+        /// move survived none of that: the one thing a reset cannot say is that a row is the same row
+        /// in a different place. Read-only is about who may change the list, not about how much the
+        /// reader is allowed to know.
+        /// </remarks>
+        private sealed class ReadOnlyListWrapper<T> : IReadOnlyList<T>, INotifyCollectionChanged, INotifyPropertyChanged
         {
             private readonly IList<T> _inner;
 
             public ReadOnlyListWrapper(IList<T> inner)
             {
                 _inner = inner ?? throw new ArgumentNullException(nameof(inner));
+
+                if (_inner is INotifyCollectionChanged collectionChanged)
+                {
+                    collectionChanged.CollectionChanged += (_, e) => CollectionChanged?.Invoke(this, e);
+                }
+
+                if (_inner is INotifyPropertyChanged propertyChanged)
+                {
+                    propertyChanged.PropertyChanged += (_, e) => PropertyChanged?.Invoke(this, e);
+                }
             }
 
             public T this[int index] => _inner[index];
 
             public int Count => _inner.Count;
+
+            public event NotifyCollectionChangedEventHandler? CollectionChanged;
+
+            public event PropertyChangedEventHandler? PropertyChanged;
 
             public IEnumerator<T> GetEnumerator() => _inner.GetEnumerator();
 

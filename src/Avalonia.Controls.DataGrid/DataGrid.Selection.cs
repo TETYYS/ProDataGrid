@@ -32,8 +32,24 @@ internal
     partial class DataGrid
     {
 
+        /// <summary>
+        /// Selects every row.
+        /// </summary>
+        /// <remarks>
+        /// A no-op under <see cref="DataGridSelectionMode.Single"/>. The row-by-row path underneath
+        /// would otherwise let each row replace the one before it and leave the last row selected,
+        /// which is not "all rows" by any reading - and is a different answer to the same question
+        /// than the selection model gives, which refuses it outright. This is the control's own
+        /// command surface rather than a caller naming rows, and Ctrl+A already declines to reach it
+        /// in this mode, so it declines quietly here too.
+        /// </remarks>
         public void SelectAll()
         {
+            if (SelectionMode == DataGridSelectionMode.Single || SlotCount == 0)
+            {
+                return;
+            }
+
             using var _ = BeginSelectionChangeScope(DataGridSelectionChangeSource.Command);
             SetRowsSelection(0, SlotCount - 1);
         }
@@ -89,16 +105,19 @@ internal
                         SetRowSelection(slot, isSelected: false, setAnchorSlot: false);
                         break;
                     case DataGridSelectionAction.SelectFromAnchorToCurrent:
+                    case DataGridSelectionAction.AddRangeFromAnchorToCurrent:
                         if (SelectionMode == DataGridSelectionMode.Extended && AnchorSlot != -1)
                         {
                             int anchorSlot = AnchorSlot;
-                            if (slot <= anchorSlot)
+                            int startSlot = Math.Min(slot, anchorSlot);
+                            int endSlot = Math.Max(slot, anchorSlot);
+                            SetRowsSelection(startSlot, endSlot);
+
+                            if (action == DataGridSelectionAction.SelectFromAnchorToCurrent)
                             {
-                                SetRowsSelection(slot, anchorSlot);
-                            }
-                            else
-                            {
-                                SetRowsSelection(anchorSlot, slot);
+                                // Selecting first and deselecting after keeps the selection from
+                                // momentarily emptying out, which consumers would see as a change.
+                                DeselectRowsOutsideRange(startSlot, endSlot);
                             }
                         }
                         else
@@ -206,11 +225,6 @@ internal
 
         internal void RefreshVisibleSelection()
         {
-            if (DisplayData == null)
-            {
-                return;
-            }
-
             for (int slot = DisplayData.FirstScrollingSlot;
                 slot > -1 && slot <= DisplayData.LastScrollingSlot;
                 slot++)
@@ -442,10 +456,20 @@ internal
         /// Makes the selection match a bound SelectedItems collection.
         /// </summary>
         /// <remarks>
+        /// <para>
         /// A bound collection is the one place a second store legitimately exists - the consumer owns
         /// it - so this direction, and the mirror back in <see cref="ApplySelectionChangeToBinding"/>,
         /// keep the <c>_syncingSelectedItems</c> guard. Everything the grid itself owns now reads and
         /// writes one store and needs no such guard.
+        /// </para>
+        /// <para>
+        /// It is also the one place the grid must decide what an over-full selection means, rather than
+        /// leaving it to the model. The model refuses a multi-row request under SingleSelect, and that
+        /// is right for a caller who asked for one; but a bound collection is not a request, it is a
+        /// state the consumer arrived at - possibly before the mode was ever set - so the grid narrows
+        /// it here and mirrors the narrowing straight back, instead of throwing out of a collection
+        /// notification the consumer cannot catch.
+        /// </para>
         /// </remarks>
         private void ApplySelectedItemsFromBinding(IList boundItems)
         {
@@ -454,7 +478,22 @@ internal
             _syncingSelectedItems = true;
             try
             {
-                _selectionModel.SetSelectedItems(boundItems);
+                if (_selectionModel.SingleSelect && boundItems.Count > 1)
+                {
+                    // The last, which is what the model kept back when it narrowed this itself, and
+                    // what the Add case below arrives at by a shorter route: of the rows the consumer
+                    // listed, the one it got round to most recently.
+                    _selectionModel.SetSelectedItems(new[] { boundItems[boundItems.Count - 1] });
+                }
+                else
+                {
+                    _selectionModel.SetSelectedItems(boundItems);
+                }
+
+                if (_selectionModel.SingleSelect)
+                {
+                    NormalizeBoundSelectionForSingleMode();
+                }
             }
             finally
             {
@@ -475,6 +514,9 @@ internal
                     // The order a consumer keeps its selected items in says nothing about which rows
                     // are selected.
                     break;
+                // An add under single selection deliberately has no case of its own: the failed guard
+                // drops through to the full re-sync below, which narrows the collection to one row and
+                // trims the consumer's copy to match. Adding one here would be adding a second answer.
                 case NotifyCollectionChangedAction.Add when !_selectionModel.SingleSelect:
                     using (_selectionModel.BatchUpdate())
                     {
@@ -618,6 +660,7 @@ internal
         {
             bool previousSync = _syncingSelectedCells;
             _syncingSelectedCells = true;
+            using var columnsDelta = BeginSelectedColumnsDelta();
             try
             {
                 var removed = _selectedCellsView.ToList();
@@ -911,7 +954,6 @@ internal
 
             if (cell.ColumnIndex < 0 ||
                 cell.RowIndex < 0 ||
-                ColumnsItemsInternal == null ||
                 cell.ColumnIndex >= ColumnsItemsInternal.Count)
             {
                 return false;
@@ -923,7 +965,7 @@ internal
                 return false;
             }
 
-            if (DataConnection == null || cell.RowIndex >= DataConnection.Count)
+            if (cell.RowIndex >= DataConnection.Count)
             {
                 return false;
             }
@@ -935,7 +977,7 @@ internal
 
         internal void RemapSelectedCellsToCurrentRows()
         {
-            if (_selectedCellsView.Count == 0 || DataConnection == null)
+            if (_selectedCellsView.Count == 0)
             {
                 return;
             }
@@ -967,8 +1009,7 @@ internal
                     continue;
                 }
 
-                var column = (ColumnsItemsInternal != null &&
-                              columnIndex < ColumnsItemsInternal.Count)
+                var column = columnIndex < ColumnsItemsInternal.Count
                     ? ColumnsItemsInternal[columnIndex]
                     : cell.Column;
                 if (column == null)
@@ -1014,6 +1055,7 @@ internal
 
             var previousSync = _syncingSelectedCells;
             _syncingSelectedCells = true;
+            using var columnsDelta = BeginSelectedColumnsDelta();
             try
             {
                 var removed = _selectedCellsView.ToList();
@@ -1177,6 +1219,109 @@ internal
             SelectedColumnsChanged?.Invoke(this, new DataGridSelectedColumnsChangedEventArgs(addedColumns, removedColumns));
         }
 
+        /// <summary>
+        /// Reports the net change to <see cref="SelectedColumns"/> made by an operation that rebuilds
+        /// the cell selection rather than editing it in place.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// A rebuild clears the column bookkeeping wholesale and re-derives it from the new cells, so
+        /// the columns that stop being selected never pass through <see cref="MarkColumnUnselected"/>.
+        /// Left alone the grid announces columns becoming selected but never announces them stopping,
+        /// and a column selected both before and after is announced as newly selected every time.
+        /// </para>
+        /// <para>
+        /// The scope keeps the per-column notifications quiet for the duration and raises one event
+        /// for the difference, which is the same shape <see cref="ApplySelectedColumnsFromBinding"/>
+        /// already used for the one flow that had been given the treatment.
+        /// </para>
+        /// </remarks>
+        private IDisposable BeginSelectedColumnsDelta() => new SelectedColumnsDeltaScope(this);
+
+        private void RaiseSelectedColumnsDelta(List<DataGridColumn> before)
+        {
+            var beforeSet = new HashSet<DataGridColumn>(before);
+            var afterSet = new HashSet<DataGridColumn>(_selectedColumnsView);
+
+            var added = new List<DataGridColumn>();
+            foreach (var column in _selectedColumnsView)
+            {
+                if (!beforeSet.Contains(column))
+                {
+                    added.Add(column);
+                }
+            }
+
+            var removed = new List<DataGridColumn>();
+            foreach (var column in before)
+            {
+                if (!afterSet.Contains(column))
+                {
+                    removed.Add(column);
+                }
+            }
+
+            if (added.Count == 0 && removed.Count == 0)
+            {
+                return;
+            }
+
+            // A bound SelectedColumns collection was left alone while the per-column notifications
+            // were suppressed, so it is brought back in step before consumers are told - by the time
+            // the event arrives, everything the grid exposes has to agree.
+            SyncSelectedColumnsBindingFromView();
+            RaiseSelectedColumnsChanged(added, removed);
+        }
+
+        private void SyncSelectedColumnsBindingFromView()
+        {
+            if (_selectedColumnsBinding == null ||
+                ReferenceEquals(_selectedColumnsBinding, _selectedColumnsView))
+            {
+                return;
+            }
+
+            var previousSync = _syncingSelectedColumns;
+            _syncingSelectedColumns = true;
+            try
+            {
+                ApplySelectedColumnsChangeToBinding(
+                    new NotifyCollectionChangedEventArgs(NotifyCollectionChangedAction.Reset));
+            }
+            finally
+            {
+                _syncingSelectedColumns = previousSync;
+            }
+        }
+
+        private sealed class SelectedColumnsDeltaScope : IDisposable
+        {
+            private readonly DataGrid _owner;
+            private readonly List<DataGridColumn> _before;
+            private readonly bool _previousSync;
+            private bool _disposed;
+
+            public SelectedColumnsDeltaScope(DataGrid owner)
+            {
+                _owner = owner;
+                _before = owner._selectedColumnsView.ToList();
+                _previousSync = owner._syncingSelectedColumns;
+                owner._syncingSelectedColumns = true;
+            }
+
+            public void Dispose()
+            {
+                if (_disposed)
+                {
+                    return;
+                }
+
+                _disposed = true;
+                _owner._syncingSelectedColumns = _previousSync;
+                _owner.RaiseSelectedColumnsDelta(_before);
+            }
+        }
+
         private void ClearSelectedColumnsInternal(bool raiseEvent)
         {
             if (_selectedColumnCounts.Count == 0 && _selectedColumnsView.Count == 0 && _selectedColumnIndices.Count == 0)
@@ -1214,11 +1359,6 @@ internal
 
         private void UpdateSelectedColumnCount(int columnIndex, int delta)
         {
-            if (DataConnection == null)
-            {
-                return;
-            }
-
             var rowCount = DataConnection.Count;
             if (rowCount <= 0)
             {
@@ -1318,9 +1458,7 @@ internal
 
         private DataGridColumn GetColumnForIndex(int columnIndex)
         {
-            if (ColumnsItemsInternal == null ||
-                columnIndex < 0 ||
-                columnIndex >= ColumnsItemsInternal.Count)
+            if (columnIndex < 0 || columnIndex >= ColumnsItemsInternal.Count)
             {
                 return null;
             }
@@ -1378,7 +1516,7 @@ internal
 
         private void UpdateSelectionVisuals(IReadOnlyList<DataGridCellInfo> cells)
         {
-            if (cells.Count == 0 || DisplayData == null)
+            if (cells.Count == 0)
             {
                 return;
             }
@@ -1407,7 +1545,7 @@ internal
 
         private void UpdateRowSelectionVisuals(IReadOnlyList<DataGridCellInfo> cells)
         {
-            if (cells.Count == 0 || DisplayData == null)
+            if (cells.Count == 0)
             {
                 return;
             }
@@ -1441,7 +1579,7 @@ internal
 
         private void UpdateColumnHeaderSelectionVisuals(IReadOnlyList<DataGridCellInfo> cells)
         {
-            if (cells.Count == 0 || ColumnsItemsInternal == null)
+            if (cells.Count == 0)
             {
                 return;
             }
@@ -1482,7 +1620,7 @@ internal
                 return GetRowSelection(slot);
             }
 
-            if (slot < 0 || ColumnsItemsInternal == null || ColumnsItemsInternal.Count == 0)
+            if (slot < 0 || ColumnsItemsInternal.Count == 0)
             {
                 return false;
             }
@@ -1510,11 +1648,6 @@ internal
 
         private int GetVisibleSelectableColumnCount()
         {
-            if (ColumnsItemsInternal == null)
-            {
-                return 0;
-            }
-
             int count = 0;
             for (int i = 0; i < ColumnsItemsInternal.Count; i++)
             {
@@ -1541,7 +1674,7 @@ internal
                 _selectedRowHeaderIndices.Clear();
             }
 
-            if (DataConnection == null || startRow > endRow)
+            if (startRow > endRow)
             {
                 return;
             }
@@ -1559,11 +1692,6 @@ internal
             if (!append)
             {
                 _selectedColumnHeaderIndices.Clear();
-            }
-
-            if (ColumnsInternal == null)
-            {
-                return;
             }
 
             var first = Math.Min(startColumn, endColumn);
@@ -1586,7 +1714,7 @@ internal
 
         private int GetColumnDisplayIndex(int columnIndex)
         {
-            if (ColumnsItemsInternal == null || columnIndex < 0 || columnIndex >= ColumnsItemsInternal.Count)
+            if (columnIndex < 0 || columnIndex >= ColumnsItemsInternal.Count)
             {
                 return -1;
             }
@@ -1597,7 +1725,7 @@ internal
 
         private int GetColumnIndexFromDisplayIndex(int displayIndex)
         {
-            if (ColumnsInternal == null || displayIndex < 0 || displayIndex >= ColumnsInternal.DisplayIndexMap.Count)
+            if (displayIndex < 0 || displayIndex >= ColumnsInternal.DisplayIndexMap.Count)
             {
                 return -1;
             }
@@ -1616,8 +1744,7 @@ internal
             anchorDisplayIndex = -1;
             targetDisplayIndex = -1;
 
-            if (ColumnsItemsInternal == null ||
-                anchorColumnIndex < 0 ||
+            if (anchorColumnIndex < 0 ||
                 targetColumnIndex < 0 ||
                 anchorColumnIndex >= ColumnsItemsInternal.Count ||
                 targetColumnIndex >= ColumnsItemsInternal.Count)
@@ -1701,11 +1828,6 @@ internal
 
         private bool IsColumnFullySelectedByCells(int columnIndex)
         {
-            if (DataConnection == null)
-            {
-                return false;
-            }
-
             return _selectedColumnCounts.TryGetValue(columnIndex, out var count) && count >= DataConnection.Count;
         }
 
@@ -1738,12 +1860,8 @@ internal
 
         public void SelectAllCells()
         {
-            if (DataConnection == null || ColumnsInternal == null)
-            {
-                return;
-            }
-
             using var _ = BeginSelectionChangeScope(DataGridSelectionChangeSource.Command);
+            using var columnsDelta = BeginSelectedColumnsDelta();
             var removed = _selectedCellsView.ToList();
             ClearCellSelectionInternal(clearRows: true, raiseEvent: false);
 
@@ -1783,11 +1901,6 @@ internal
 
         private void AddSingleCellSelection(int columnIndex, int slot, List<DataGridCellInfo> addedCollector)
         {
-            if (DataConnection == null)
-            {
-                return;
-            }
-
             int rowIndex = RowIndexFromSlot(slot);
             if (rowIndex < 0 || columnIndex < 0 || columnIndex >= ColumnsItemsInternal.Count)
             {
@@ -1829,7 +1942,7 @@ internal
 
         private void SelectCellRangeInternal(int startRowIndex, int endRowIndex, int startColumnIndex, int endColumnIndex, List<DataGridCellInfo> addedCollector)
         {
-            if (DataConnection == null || ColumnsItemsInternal == null || startRowIndex > endRowIndex || startColumnIndex > endColumnIndex)
+            if (startRowIndex > endRowIndex || startColumnIndex > endColumnIndex)
             {
                 return;
             }
@@ -1882,7 +1995,7 @@ internal
 
         private void SelectCellRangeByDisplayIndexInternal(int startRowIndex, int endRowIndex, int startDisplayIndex, int endDisplayIndex, List<DataGridCellInfo> addedCollector)
         {
-            if (DataConnection == null || ColumnsItemsInternal == null || startRowIndex > endRowIndex)
+            if (startRowIndex > endRowIndex)
             {
                 return;
             }
@@ -1932,6 +2045,15 @@ internal
             }
         }
 
+        /// <summary>
+        /// Trims a bound SelectedItems collection down to the single item Single mode kept.
+        /// </summary>
+        /// <remarks>
+        /// Nothing else corrects that collection: the consumer owns it, and the write-back in
+        /// <see cref="ApplySelectionChangeToBinding"/> is suppressed for the whole time a change
+        /// coming from the binding is being applied. Without this, handing Single mode two items
+        /// leaves the model holding one and the consumer's collection holding both, permanently.
+        /// </remarks>
         private void NormalizeBoundSelectionForSingleMode()
         {
             if (_selectedItemsBinding == null)
@@ -1939,8 +2061,17 @@ internal
                 return;
             }
 
+            // Clearing and re-adding tells the consumer its collection was rebuilt, so it is only
+            // worth saying when it actually was.
+            int count = _selectionModel.Count;
+            if (_selectedItemsBinding.Count == count &&
+                (count == 0 || Equals(_selectedItemsBinding[0], _selectionModel.SelectedItems[0])))
+            {
+                return;
+            }
+
             _selectedItemsBinding.Clear();
-            if (_selectionModel.Count > 0)
+            if (count > 0)
             {
                 _selectedItemsBinding.Add(_selectionModel.SelectedItems[0]);
             }
@@ -2231,6 +2362,12 @@ internal
             return false;
         }
 
+        /// <remarks>
+        /// Asks the model rather than scanning its flattened list: the model answers in constant time
+        /// from a lookup it already keeps, and it matches items the way every other index in the grid
+        /// is resolved - by equality as well as reference, so an item that merely equals the visible
+        /// one is not mistaken for a hidden one and expanded towards.
+        /// </remarks>
         private bool IsHierarchicalItemVisible(object item)
         {
             if (_hierarchicalModel == null)
@@ -2238,15 +2375,13 @@ internal
                 return false;
             }
 
-            foreach (var node in _hierarchicalModel.Flattened)
+            if (item is Avalonia.Controls.DataGridHierarchical.HierarchicalNode node)
             {
-                if (ReferenceEquals(node, item) || ReferenceEquals(node.Item, item))
-                {
-                    return true;
-                }
+                return _hierarchicalModel.IndexOf(node) >= 0;
             }
 
-            return false;
+            return ProjectHierarchicalSelectionItem(item) is { } projected
+                && _hierarchicalModel.IndexOf(projected) >= 0;
         }
 
         private void OnSelectionModeChanged(AvaloniaPropertyChangedEventArgs e)
@@ -2254,13 +2389,6 @@ internal
             if (!_areHandlersSuspended)
             {
                 using var _ = BeginSelectionChangeScope(DataGridSelectionChangeSource.Programmatic);
-
-                // Noted so that attaching can tell which side moved last; see
-                // AttachSelectionModelHandlers.
-                if (_externalSubscriptionsDetached)
-                {
-                    _selectionModeSetWhileDetached = true;
-                }
 
                 ClearRowSelection(resetAnchorSlot: true);
                 if (_selectionModel != null)
@@ -2404,11 +2532,6 @@ internal
             item = null;
             column = null;
 
-            if (DisplayData == null || ColumnsInternal == null)
-            {
-                return false;
-            }
-
             if (CurrentSlot != -1 && GetRowSelection(CurrentSlot))
             {
                 item = CurrentItem;
@@ -2418,7 +2541,7 @@ internal
                 item = SelectedItem;
             }
 
-            if (item == null || DataConnection == null || !TryGetRowIndexFromItem(item, out _))
+            if (item == null || !TryGetRowIndexFromItem(item, out _))
             {
                 return false;
             }

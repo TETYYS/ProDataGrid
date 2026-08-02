@@ -35,6 +35,79 @@ public class ObservableRangeCollectionTests
         Assert.Equal(new[] { 1, 2, 3 }, collection.ToArray());
     }
 
+    [Theory]
+    // Forwards: the run travels right, everything it passes slides left.
+    [InlineData(0, 2, 1, new[] { 2, 3, 1, 4, 5 })]
+    [InlineData(0, 3, 2, new[] { 3, 4, 5, 1, 2 })]
+    // Backwards.
+    [InlineData(3, 1, 2, new[] { 1, 4, 5, 2, 3 })]
+    [InlineData(4, 0, 1, new[] { 5, 1, 2, 3, 4 })]
+    // The whole list, and a no-op.
+    [InlineData(0, 0, 5, new[] { 1, 2, 3, 4, 5 })]
+    public void MoveRange_Rotates_The_Span_It_Travels_Over(int oldIndex, int newIndex, int count, int[] expected)
+    {
+        var collection = new ObservableRangeCollection<int>(new[] { 1, 2, 3, 4, 5 });
+
+        collection.MoveRange(oldIndex, newIndex, count);
+
+        Assert.Equal(expected, collection.ToArray());
+    }
+
+    [Fact]
+    public void MoveRange_Raises_One_Move_And_Not_A_Remove_And_An_Add()
+    {
+        var collection = new ObservableRangeCollection<int>(new[] { 1, 2, 3, 4, 5 });
+        var events = new List<NotifyCollectionChangedEventArgs>();
+        var propertyChanges = new List<string?>();
+        ((INotifyPropertyChanged)collection).PropertyChanged += (_, e) => propertyChanges.Add(e.PropertyName);
+        collection.CollectionChanged += (_, e) => events.Add(e);
+
+        collection.MoveRange(0, 3, 2); // {1,2} to the end
+
+        var args = Assert.Single(events);
+        Assert.Equal(NotifyCollectionChangedAction.Move, args.Action);
+        Assert.Equal(0, args.OldStartingIndex);
+        Assert.Equal(3, args.NewStartingIndex);
+        Assert.Equal(new[] { 1, 2 }, args.OldItems!.Cast<int>().ToArray());
+        Assert.Equal(new[] { 1, 2 }, args.NewItems!.Cast<int>().ToArray());
+        Assert.Equal(new[] { 3, 4, 5, 1, 2 }, collection.ToArray());
+
+        // Nothing joined or left, so the count did not change and nothing should claim it did.
+        Assert.DoesNotContain(nameof(collection.Count), propertyChanges);
+        Assert.Contains("Item[]", propertyChanges);
+    }
+
+    [Fact]
+    public void MoveRange_Raises_Nothing_When_Nothing_Moves()
+    {
+        var collection = new ObservableRangeCollection<int>(new[] { 1, 2, 3 });
+        var events = new List<NotifyCollectionChangedEventArgs>();
+        collection.CollectionChanged += (_, e) => events.Add(e);
+
+        collection.MoveRange(1, 1, 2);
+        collection.MoveRange(0, 2, 0);
+
+        Assert.Empty(events);
+        Assert.Equal(new[] { 1, 2, 3 }, collection.ToArray());
+    }
+
+    [Theory]
+    [InlineData(-1, 0, 1)]
+    [InlineData(0, -1, 1)]
+    [InlineData(2, 0, 2)] // run runs off the end
+    [InlineData(0, 2, 2)] // destination runs off the end
+    // Rejected on its own merits, not only when the run would have gone somewhere: the
+    // destination being the origin says nothing about whether either one exists.
+    [InlineData(-5, -5, 3)]
+    [InlineData(99, 99, 3)]
+    [InlineData(0, 0, -1)] // a negative run is not a no-op, it is nonsense
+    public void MoveRange_Rejects_A_Run_That_Does_Not_Fit(int oldIndex, int newIndex, int count)
+    {
+        var collection = new ObservableRangeCollection<int>(new[] { 1, 2, 3 });
+
+        Assert.Throws<ArgumentOutOfRangeException>(() => collection.MoveRange(oldIndex, newIndex, count));
+    }
+
     [Fact]
     public void RemoveRange_Raises_Remove_With_All_Items()
     {

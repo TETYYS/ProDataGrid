@@ -47,7 +47,7 @@ namespace Avalonia.Controls
             {
                 _restoredScrollSlot = slot.Value;
             }
-            else if (DisplayData != null && DisplayData.FirstScrollingSlot >= 0)
+            else if (DisplayData.FirstScrollingSlot >= 0)
             {
                 _restoredScrollSlot = DisplayData.FirstScrollingSlot;
             }
@@ -342,7 +342,10 @@ namespace Avalonia.Controls
                         }
                     }
 
-                    if (!anySelected && state.SelectedIndexes != null)
+                    // Positions need rows to count, and state can be restored before ItemsSource is
+                    // assigned. Saved indexes are then simply not restorable - skipped, like any key
+                    // above that would not resolve, rather than asked for and thrown at.
+                    if (!anySelected && state.SelectedIndexes != null && _selectionModel.View != null)
                     {
                         foreach (var index in state.SelectedIndexes)
                         {
@@ -604,11 +607,6 @@ namespace Avalonia.Controls
 
         public DataGridColumnLayoutState CaptureColumnLayoutState(DataGridStateOptions options = null)
         {
-            if (ColumnsInternal == null)
-            {
-                return null;
-            }
-
             var columns = new List<DataGridColumnState>();
             foreach (var column in ColumnsInternal.GetDisplayedColumns())
             {
@@ -638,7 +636,7 @@ namespace Avalonia.Controls
 
         public void RestoreColumnLayoutState(DataGridColumnLayoutState state, DataGridStateOptions options = null)
         {
-            if (state == null || ColumnsInternal == null)
+            if (state == null)
             {
                 return;
             }
@@ -844,7 +842,7 @@ namespace Avalonia.Controls
 
         private void UpdateGroupingIndentation()
         {
-            if (RowGroupSublevelIndents == null || DisplayData == null)
+            if (RowGroupSublevelIndents == null)
             {
                 _pendingGroupingIndentationReset = false;
                 InvalidateRowsMeasure(invalidateIndividualElements: true);
@@ -1015,6 +1013,7 @@ namespace Avalonia.Controls
             }
 
             using var _ = BeginSelectionChangeScope(DataGridSelectionChangeSource.Programmatic);
+            using var columnsDelta = BeginSelectedColumnsDelta();
             var previousSync = _syncingSelectedCells;
             _syncingSelectedCells = true;
             try
@@ -1190,14 +1189,11 @@ namespace Avalonia.Controls
                 }
             }
 
-            if (DataConnection != null)
+            var index = DataConnection.IndexOf(key);
+            if (index >= 0)
             {
-                var index = DataConnection.IndexOf(key);
-                if (index >= 0)
-                {
-                    item = DataConnection.GetDataItem(index);
-                    return true;
-                }
+                item = DataConnection.GetDataItem(index);
+                return true;
             }
 
             if (_hierarchicalRowsEnabled && _hierarchicalModel != null)
@@ -1269,7 +1265,7 @@ namespace Avalonia.Controls
                 }
             }
 
-            if (fallbackIndex >= 0 && ColumnsInternal != null)
+            if (fallbackIndex >= 0)
             {
                 var fallback = ColumnsInternal.GetColumnAtDisplayIndex(fallbackIndex);
                 if (fallback != null)
@@ -1278,7 +1274,7 @@ namespace Avalonia.Controls
                 }
             }
 
-            if (fallbackIndex >= 0 && ColumnsItemsInternal != null && fallbackIndex < ColumnsItemsInternal.Count)
+            if (fallbackIndex >= 0 && fallbackIndex < ColumnsItemsInternal.Count)
             {
                 return ColumnsItemsInternal[fallbackIndex];
             }
@@ -1300,11 +1296,6 @@ namespace Avalonia.Controls
                 {
                     return pair.Value;
                 }
-            }
-
-            if (ColumnsItemsInternal == null)
-            {
-                return null;
             }
 
             foreach (var candidate in ColumnsItemsInternal)
@@ -1343,11 +1334,6 @@ namespace Avalonia.Controls
                 return column;
             }
 
-            if (ColumnsItemsInternal == null)
-            {
-                return null;
-            }
-
             foreach (var candidate in ColumnsItemsInternal)
             {
                 if (candidate == null ||
@@ -1368,7 +1354,7 @@ namespace Avalonia.Controls
 
         private DataGridColumn FindColumnByPath(string path)
         {
-            if (ColumnsItemsInternal == null || string.IsNullOrEmpty(path))
+            if (string.IsNullOrEmpty(path))
             {
                 return null;
             }
@@ -1790,7 +1776,7 @@ namespace Avalonia.Controls
 
         private bool ForceRestoreScrollStateIfNeeded(DataGridScrollState state)
         {
-            if (state == null || DisplayData == null)
+            if (state == null)
             {
                 return false;
             }

@@ -1056,6 +1056,48 @@ public class DataGridScrollingTests
         Assert.Equal(target.SlotCount, estimator.LastTotalSlotCount);
         Assert.Equal(target.GetCollapsedSlotCount(0, target.SlotCount - 1), estimator.LastCollapsedSlotCount);
         Assert.Empty(estimator.LastRowGroupHeaderCounts);
+
+        // The estimator reports no details height, so it is told of no details either - counting the
+        // rows with details would be a walk of the data source to produce a term it multiplies by zero.
+        Assert.Equal(0, estimator.LastDetailsVisibleCount);
+    }
+
+    [AvaloniaFact]
+    public void EdgedRowsHeight_Passes_Details_Count_When_Estimator_Gives_Details_A_Height()
+    {
+        // Arrange
+        var items = Enumerable.Range(0, 12).Select(x => new ScrollTestModel($"Item {x}")).ToList();
+        var root = new Window
+        {
+            Width = 300,
+            Height = 200,
+        };
+
+        root.SetThemeStyles();
+
+        var estimator = new CapturingRowHeightEstimator
+        {
+            ReturnValue = 1234.5,
+            RowDetailsHeightEstimate = 17,
+        };
+
+        var target = new DataGrid
+        {
+            ItemsSource = items,
+            HeadersVisibility = DataGridHeadersVisibility.Column,
+            RowDetailsVisibilityMode = DataGridRowDetailsVisibilityMode.Visible,
+            RowHeightEstimator = estimator,
+        };
+        target.ColumnsInternal.Add(new DataGridTextColumn { Header = "Name", Binding = new Binding("Name") });
+
+        root.Content = target;
+        root.Show();
+        root.UpdateLayout();
+
+        // Act
+        _ = target.GetEdgedRowsHeight();
+
+        // Assert
         Assert.Equal(target.SlotCount, estimator.LastDetailsVisibleCount);
     }
 
@@ -2166,7 +2208,11 @@ public class DataGridScrollingTests
 
         public double RowHeightEstimate => _rowHeightEstimate;
 
-        public double RowDetailsHeightEstimate => _rowDetailsHeightEstimate;
+        public double RowDetailsHeightEstimate
+        {
+            get => _rowDetailsHeightEstimate;
+            set => _rowDetailsHeightEstimate = value;
+        }
 
         public double GetRowGroupHeaderHeightEstimate(int level) => DefaultHeight;
 

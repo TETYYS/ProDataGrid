@@ -8,6 +8,7 @@ using System.Data;
 using System.Linq;
 using System.Reflection;
 using Avalonia.Collections;
+using Avalonia.Controls.DataGridHierarchical;
 using Avalonia.Controls.DataGridSelection;
 using Avalonia.Controls.Selection;
 using Avalonia.Data;
@@ -351,7 +352,7 @@ public class DataGridCollectionViewTests
     }
 
     [Fact]
-    public void Replace_Raises_Remove_Then_Add_And_Updates_View()
+    public void Replace_Raises_One_Replace_And_Updates_View()
     {
         var items = new ObservableCollection<int> { 1, 2, 3 };
         var view = new DataGridCollectionView(items);
@@ -363,22 +364,267 @@ public class DataGridCollectionViewTests
 
         Assert.Equal(new[] { 1, 5, 3 }, view.Cast<int>().ToArray());
 
+        // One Replace, passed through as it arrived. The view used to split it into a Remove and
+        // an Add - it even carried an isReplace flag down into ProcessRemoveEvent to patch up the
+        // difference - which told consumers the item had been taken away and an unrelated one put
+        // in its place. Anything keyed on the item, selection above all, lost the row that way.
+        var change = Assert.Single(changes);
+        Assert.Equal(NotifyCollectionChangedAction.Replace, change.Action);
+        Assert.Equal(2, Assert.Single(Assert.IsAssignableFrom<IList>(change.OldItems).Cast<int>()));
+        Assert.Equal(5, Assert.Single(Assert.IsAssignableFrom<IList>(change.NewItems).Cast<int>()));
+        Assert.Equal(1, change.OldStartingIndex);
+        Assert.Equal(1, change.NewStartingIndex);
+    }
+
+    [Fact]
+    public void Replace_When_Sorted_Repositions_The_Replacement()
+    {
+        var items = new ObservableCollection<int> { 1, 2, 3 };
+        var view = new DataGridCollectionView(items);
+        view.SortDescriptions.Add(DataGridSortDescription.FromComparer(Comparer<int>.Default));
+
+        Assert.Equal(new[] { 1, 2, 3 }, view.Cast<int>().ToArray());
+
+        var changes = new List<NotifyCollectionChangedEventArgs>();
+        view.CollectionChanged += (_, e) => changes.Add(e);
+
+        items[1] = 5;
+
+        // Sorting is evaluated on an insertion, so it is evaluated here too - 5 belongs at the end.
+        // This used to come out as {1,5,3}: the sorted-insert check skipped the last position, so
+        // the replacement stayed where the removal had left it.
+        Assert.Equal(new[] { 1, 3, 5 }, view.Cast<int>().ToArray());
+
+        // A replacement that has to move is a replacement and a move, not a removal and an
+        // insertion. Both keep the row, so whatever is keyed on the item keeps its hold on it.
         Assert.Collection(
             changes,
             e =>
             {
-                Assert.Equal(NotifyCollectionChangedAction.Remove, e.Action);
-                var oldItems = Assert.IsAssignableFrom<IList>(e.OldItems);
-                Assert.Equal(2, Assert.Single(oldItems.Cast<int>()));
+                Assert.Equal(NotifyCollectionChangedAction.Replace, e.Action);
+                Assert.Equal(2, Assert.Single(Assert.IsAssignableFrom<IList>(e.OldItems).Cast<int>()));
+                Assert.Equal(5, Assert.Single(Assert.IsAssignableFrom<IList>(e.NewItems).Cast<int>()));
                 Assert.Equal(1, e.OldStartingIndex);
             },
             e =>
             {
-                Assert.Equal(NotifyCollectionChangedAction.Add, e.Action);
-                var newItems = Assert.IsAssignableFrom<IList>(e.NewItems);
-                Assert.Equal(5, Assert.Single(newItems.Cast<int>()));
+                Assert.Equal(NotifyCollectionChangedAction.Move, e.Action);
+                Assert.Equal(1, e.OldStartingIndex);
+                Assert.Equal(2, e.NewStartingIndex);
+            });
+    }
+
+    [Fact]
+    public void Replace_When_Sorted_Carries_Currency_Along_With_The_Item_It_Is_On()
+    {
+        var items = new ObservableCollection<int> { 1, 2, 3, 4 };
+        var view = new DataGridCollectionView(items);
+        view.SortDescriptions.Add(DataGridSortDescription.FromComparer(Comparer<int>.Default));
+
+        view.MoveCurrentToPosition(2);
+        Assert.Equal(3, view.CurrentItem);
+
+        // 2 becomes 5, which belongs at the end, so 3 and 4 each slide one place towards the front.
+        items[1] = 5;
+
+        Assert.Equal(new[] { 1, 3, 4, 5 }, view.Cast<int>().ToArray());
+
+        // Currency is on an item, not on the index that item happened to be at. Without this the
+        // position stayed at 2 and started reporting 4 as the current item.
+        Assert.Equal(3, view.CurrentItem);
+        Assert.Equal(1, view.CurrentPosition);
+    }
+
+    [Fact]
+    public void Replace_When_Sorted_Moves_Currency_Onto_The_Replacement()
+    {
+        var items = new ObservableCollection<int> { 1, 2, 3, 4 };
+        var view = new DataGridCollectionView(items);
+        view.SortDescriptions.Add(DataGridSortDescription.FromComparer(Comparer<int>.Default));
+
+        view.MoveCurrentToPosition(1);
+        Assert.Equal(2, view.CurrentItem);
+
+        // The current item is the one being replaced, so currency follows the replacement to
+        // wherever the sort puts it.
+        items[1] = 5;
+
+        Assert.Equal(new[] { 1, 3, 4, 5 }, view.Cast<int>().ToArray());
+        Assert.Equal(5, view.CurrentItem);
+        Assert.Equal(3, view.CurrentPosition);
+    }
+
+    [Fact]
+    public void Replace_When_Sorted_Raises_Only_A_Replace_If_The_Position_Holds()
+    {
+        var items = new ObservableCollection<int> { 1, 2, 5 };
+        var view = new DataGridCollectionView(items);
+        view.SortDescriptions.Add(DataGridSortDescription.FromComparer(Comparer<int>.Default));
+
+        var changes = new List<NotifyCollectionChangedEventArgs>();
+        view.CollectionChanged += (_, e) => changes.Add(e);
+
+        items[1] = 3; // still sorts between 1 and 5
+
+        Assert.Equal(new[] { 1, 3, 5 }, view.Cast<int>().ToArray());
+
+        var change = Assert.Single(changes);
+        Assert.Equal(NotifyCollectionChangedAction.Replace, change.Action);
+    }
+
+    [Fact]
+    public void Move_When_Sorted_Changes_Nothing_And_Raises_Nothing()
+    {
+        var items = new ObservableCollection<int> { 3, 1, 2 };
+        var view = new DataGridCollectionView(items);
+        view.SortDescriptions.Add(DataGridSortDescription.FromComparer(Comparer<int>.Default));
+
+        Assert.Equal(new[] { 1, 2, 3 }, view.Cast<int>().ToArray());
+
+        var changes = new List<NotifyCollectionChangedEventArgs>();
+        view.CollectionChanged += (_, e) => changes.Add(e);
+
+        items.Move(0, 2);
+
+        // Sorted order comes from the comparer, and moving an item in the source changes no sort
+        // key. The view was already showing the right thing, so there is nothing to report. This
+        // used to refresh, announcing a wholesale replacement of a collection that had not visibly
+        // changed at all.
+        Assert.Equal(new[] { 1, 2, 3 }, view.Cast<int>().ToArray());
+        Assert.Empty(changes);
+    }
+
+    [Fact]
+    public void Replace_When_Sorted_Moves_The_Replacement_Towards_The_Front()
+    {
+        var items = new ObservableCollection<int> { 1, 3, 5 };
+        var view = new DataGridCollectionView(items);
+        view.SortDescriptions.Add(DataGridSortDescription.FromComparer(Comparer<int>.Default));
+
+        Assert.Equal(new[] { 1, 3, 5 }, view.Cast<int>().ToArray());
+
+        var changes = new List<NotifyCollectionChangedEventArgs>();
+        view.CollectionChanged += (_, e) => changes.Add(e);
+
+        // The last row becomes a value that sorts second, so it has to travel back over the row
+        // above it. The companion test covers a replacement moving the other way; the two
+        // directions slide the rows in between opposite ways and only one of them can be right.
+        items[2] = 2;
+
+        Assert.Equal(new[] { 1, 2, 3 }, view.Cast<int>().ToArray());
+
+        Assert.Collection(
+            changes,
+            e =>
+            {
+                Assert.Equal(NotifyCollectionChangedAction.Replace, e.Action);
+                Assert.Equal(5, Assert.Single(Assert.IsAssignableFrom<IList>(e.OldItems).Cast<int>()));
+                Assert.Equal(2, Assert.Single(Assert.IsAssignableFrom<IList>(e.NewItems).Cast<int>()));
+                Assert.Equal(2, e.OldStartingIndex);
+            },
+            e =>
+            {
+                Assert.Equal(NotifyCollectionChangedAction.Move, e.Action);
+                Assert.Equal(2, e.OldStartingIndex);
                 Assert.Equal(1, e.NewStartingIndex);
             });
+    }
+
+    [Fact]
+    public void Replace_When_Sorted_Carries_Currency_Along_As_Rows_Slide_Down()
+    {
+        var items = new ObservableCollection<int> { 1, 3, 5, 7 };
+        var view = new DataGridCollectionView(items);
+        view.SortDescriptions.Add(DataGridSortDescription.FromComparer(Comparer<int>.Default));
+
+        view.MoveCurrentToPosition(1);
+        Assert.Equal(3, view.CurrentItem);
+
+        // 7 becomes 2, which belongs second, so 3 and 5 each slide one place towards the end.
+        items[3] = 2;
+
+        Assert.Equal(new[] { 1, 2, 3, 5 }, view.Cast<int>().ToArray());
+
+        // Currency is on an item, not on the index that item happened to be at.
+        Assert.Equal(3, view.CurrentItem);
+        Assert.Equal(2, view.CurrentPosition);
+    }
+
+    [Fact]
+    public void Replace_When_Filtered_Takes_The_Row_Away_If_The_Replacement_Does_Not_Match()
+    {
+        var items = new ObservableCollection<int> { 1, 2, 3, 4 };
+        var view = new DataGridCollectionView(items)
+        {
+            Filter = item => (int)item % 2 == 0
+        };
+
+        Assert.Equal(new[] { 2, 4 }, view.Cast<int>().ToArray());
+
+        // A filter can admit one of a replaced pair and not the other, so this cannot be reported
+        // as one row changing what it shows - the row genuinely goes away.
+        items[1] = 7;
+
+        Assert.Equal(new[] { 4 }, view.Cast<int>().ToArray());
+    }
+
+    [Fact]
+    public void Replace_When_Filtered_Brings_A_Row_Back_If_The_Replacement_Matches()
+    {
+        var items = new ObservableCollection<int> { 1, 2, 3 };
+        var view = new DataGridCollectionView(items)
+        {
+            Filter = item => (int)item % 2 == 0
+        };
+
+        Assert.Equal(new[] { 2 }, view.Cast<int>().ToArray());
+
+        // The other half of the same case: what was filtered out is swapped for something that
+        // passes, and a row appears where there was none.
+        items[0] = 4;
+
+        Assert.Equal(new[] { 4, 2 }, view.Cast<int>().ToArray());
+    }
+
+    [Fact]
+    public void MoveRange_When_Filtered_Leaves_The_Visible_Rows_In_Source_Order()
+    {
+        var items = new ObservableRangeCollection<int> { 1, 2, 3, 4, 5, 6 };
+        var view = new DataGridCollectionView(items)
+        {
+            Filter = item => (int)item % 2 == 0
+        };
+
+        Assert.Equal(new[] { 2, 4, 6 }, view.Cast<int>().ToArray());
+
+        // A filter breaks the correspondence between source positions and view positions, so a run
+        // that travels together at the source is not a run here - only two of these three rows are
+        // even on screen, and they are not adjacent.
+        items.MoveRange(0, 4, 2);
+
+        Assert.Equal(new[] { 3, 4, 5, 6, 1, 2 }, items.ToArray());
+        Assert.Equal(new[] { 4, 6, 2 }, view.Cast<int>().ToArray());
+    }
+
+    [Fact]
+    public void MoveRange_When_Sorted_Changes_Nothing_And_Raises_Nothing()
+    {
+        var items = new ObservableRangeCollection<int> { 5, 6, 1, 2, 3, 4 };
+        var view = new DataGridCollectionView(items);
+        view.SortDescriptions.Add(DataGridSortDescription.FromComparer(Comparer<int>.Default));
+
+        Assert.Equal(new[] { 1, 2, 3, 4, 5, 6 }, view.Cast<int>().ToArray());
+
+        var changes = new List<NotifyCollectionChangedEventArgs>();
+        view.CollectionChanged += (_, e) => changes.Add(e);
+
+        // Same as moving a single item: sorted order comes from the comparer, and relocating a run
+        // in the source changes no item's sort key. Nothing the user can see has moved, so nothing
+        // is reported - a refresh here would announce a wholesale replacement of the rows.
+        items.MoveRange(0, 4, 2);
+
+        Assert.Equal(new[] { 1, 2, 3, 4, 5, 6 }, view.Cast<int>().ToArray());
+        Assert.Empty(changes);
     }
 
     [Fact]

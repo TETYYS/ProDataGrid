@@ -29,6 +29,14 @@ namespace Avalonia.Controls
         /// <summary>
         /// Gets the current estimated height for row details.
         /// </summary>
+        /// <remarks>
+        /// Reporting zero states that details add no height, and the grid takes it at its word: the
+        /// details counts handed to <see cref="CalculateTotalHeight"/> and
+        /// <see cref="UpdateFromDisplayedRows"/> are then zero rather than the real number of rows with
+        /// details. Counting those rows is a walk of the data source, and there is no point paying for it
+        /// to arrive at a term this estimator has said is worth nothing. An estimator that applies a
+        /// details height of its own must report it here.
+        /// </remarks>
         double RowDetailsHeightEstimate { get; }
 
         /// <summary>
@@ -71,7 +79,10 @@ namespace Avalonia.Controls
         /// <param name="totalSlotCount">The total number of slots (rows + group headers).</param>
         /// <param name="collapsedSlotCount">The number of collapsed slots.</param>
         /// <param name="rowGroupHeaderCounts">The count of row group headers at each level.</param>
-        /// <param name="detailsVisibleCount">The number of rows with details visible.</param>
+        /// <param name="detailsVisibleCount">
+        /// The number of rows with details visible, or zero when <see cref="RowDetailsHeightEstimate"/>
+        /// is zero - see the remarks on that property.
+        /// </param>
         /// <returns>The total estimated height.</returns>
         double CalculateTotalHeight(int totalSlotCount, int collapsedSlotCount, int[] rowGroupHeaderCounts, int detailsVisibleCount);
 

@@ -969,11 +969,6 @@ internal
 
         private void NormalizeStarColumnWidths(int displayIndex, bool userInitiated)
         {
-            if (ColumnsInternal == null)
-            {
-                return;
-            }
-
             double totalStarWeights = 0;
             double totalStarColumnsWidth = 0;
             var starColumns = new List<DataGridColumn>();

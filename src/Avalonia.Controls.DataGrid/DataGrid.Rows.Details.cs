@@ -37,22 +37,6 @@ namespace Avalonia.Controls
             else if (RowDetailsVisibilityMode == DataGridRowDetailsVisibilityMode.VisibleWhenSelected)
             {
                 // Total number of remaining rows that are selected
-                if (_selectionModel != null && DataConnection != null)
-                {
-                    int selectedCount = 0;
-                    var selectedIndexes = _selectionModel.SelectedIndexes;
-                    for (int i = 0; i < selectedIndexes.Count; i++)
-                    {
-                        int slot = SlotFromSelectionIndex(selectedIndexes[i]);
-                        if (slot >= lowerBound && slot <= upperBound)
-                        {
-                            selectedCount++;
-                        }
-                    }
-
-                    return selectedCount;
-                }
-
                 return GetSelectedSlotCount(lowerBound, upperBound);
             }
             Debug.Assert(false); // Shouldn't ever happen

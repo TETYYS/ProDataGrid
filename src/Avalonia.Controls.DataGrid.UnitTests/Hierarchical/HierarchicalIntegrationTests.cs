@@ -174,6 +174,22 @@ public class HierarchicalIntegrationTests
         Assert.Equal(3, lastArgs.IndexMap.NewCount);
     }
 
+    /// <summary>
+    /// A selection model over <paramref name="model"/> with no grid in the picture.
+    /// </summary>
+    /// <remarks>
+    /// The view is what the grid would have supplied, attached directly. A selection model needs
+    /// one - it is where the selection would be shown - but it does not need a whole control, which
+    /// is the point of these tests: what follows is about items surviving sorts and expansion, not
+    /// about rows.
+    /// </remarks>
+    private static DataGridSelectionModel<object> CreateSelection(HierarchicalModel model)
+    {
+        var selection = new DataGridSelectionModel<object>();
+        selection.AttachView(new DataGridHierarchicalSelectionView(model, selection.InvalidateOrder));
+        return selection;
+    }
+
     private static IComparer<object> BuildComparer(IReadOnlyList<SortingDescriptor> descriptors)
     {
         return Comparer<object>.Create((x, y) =>
@@ -438,10 +454,9 @@ public class HierarchicalIntegrationTests
         Assert.Equal(groups[1], model.GetItem(4));
         Assert.Equal(items[2], model.GetItem(5));
 
-        // No grid here, so the model has no view to derive indexes from. It can still be asked
-        // about items, which is all it stores.
+        // No grid here - just the hierarchy and a selection over it, which is all this is about.
         var flattened = model.Flattened.Select(x => x.Item).ToArray();
-        var selection = new DataGridSelectionModel<object>();
+        var selection = CreateSelection(model);
         selection.Select(flattened[3]); // a2
         Assert.Same(items[1], selection.SelectedItem);
     }
@@ -925,6 +940,145 @@ public class HierarchicalIntegrationTests
     }
 
     [Fact]
+    public async Task Move_Of_Expanded_Node_Is_One_Move_And_Reports_Nothing_To_Selection()
+    {
+        var root = new Item("root");
+        var childA = new Item("a");
+        var childB = new Item("b");
+        childB.Children.Add(new Item("b1"));
+        var childC = new Item("c");
+        root.Children.Add(childA);
+        root.Children.Add(childB);
+        root.Children.Add(childC);
+
+        var model = CreateModel();
+        model.SetRoot(root);
+        model.ExpandAll();
+
+        // [root, a, b, b1, c] - childB and its expanded child travel together as a run of two.
+        var notifications = new List<NotifyCollectionChangedEventArgs>();
+        ((INotifyCollectionChanged)model.ObservableFlattened).CollectionChanged += (_, e) => notifications.Add(e);
+
+        var grid = new DataGrid
+        {
+            HierarchicalModel = model,
+            HierarchicalRowsEnabled = true,
+            AutoGenerateColumns = false,
+            ItemsSource = model.ObservableFlattened
+        };
+
+        grid.ColumnsInternal.Add(new DataGridHierarchicalColumn
+        {
+            Header = "Name",
+            Binding = new Avalonia.Data.Binding("Item.Name")
+        });
+
+        grid.ApplyTemplate();
+        grid.UpdateLayout();
+
+        grid.Selection.SelectAt(2); // childB
+        Assert.Contains(2, grid.Selection.SelectedIndexes);
+
+        var selectionChanges = new List<DataGridSelectionModelChangedEventArgs>();
+        grid.Selection.SelectionChanged += (_, e) => selectionChanges.Add(e);
+        notifications.Clear();
+
+        root.Children.Move(1, 2); // childB after childC
+
+        if (!Dispatcher.UIThread.CheckAccess())
+        {
+            await Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Background);
+        }
+
+        Assert.Equal(
+            new[] { "root", "a", "c", "b", "b1" },
+            model.Flattened.Select(node => ((Item)node.Item).Name).ToArray());
+
+        // One Move, not a Remove followed by an Add. Two notifications would end in the same
+        // arrangement while telling every consumer that these rows left the grid and different
+        // ones arrived.
+        var notification = Assert.Single(notifications);
+        Assert.Equal(NotifyCollectionChangedAction.Move, notification.Action);
+        Assert.Equal(2, notification.OldStartingIndex);
+        Assert.Equal(3, notification.NewStartingIndex);
+        Assert.Equal(2, notification.OldItems!.Count);
+
+        // The selection names the item, so it went along for the ride and the reported index
+        // follows the row.
+        Assert.Equal(3, grid.Selection.SelectedIndex);
+        Assert.Same(childB, grid.Selection.SelectedItem);
+        Assert.True(grid.GetRowSelectionFromRowIndex(3));
+        Assert.False(grid.GetRowSelectionFromRowIndex(2));
+
+        // A move is neither a selection nor a deselection, so nothing is reported.
+        Assert.Empty(selectionChanges);
+    }
+
+    [Fact]
+    public async Task Move_Of_Expanded_Node_Through_CollectionView_Is_Still_One_Move()
+    {
+        var root = new Item("root");
+        var childA = new Item("a");
+        var childB = new Item("b");
+        childB.Children.Add(new Item("b1"));
+        var childC = new Item("c");
+        root.Children.Add(childA);
+        root.Children.Add(childB);
+        root.Children.Add(childC);
+
+        var model = CreateModel();
+        model.SetRoot(root);
+        model.ExpandAll();
+
+        var view = new DataGridCollectionView(model.Flattened);
+
+        var grid = new DataGrid
+        {
+            HierarchicalModel = model,
+            HierarchicalRowsEnabled = true,
+            AutoGenerateColumns = false,
+            ItemsSource = view
+        };
+
+        grid.ColumnsInternal.Add(new DataGridHierarchicalColumn
+        {
+            Header = "Name",
+            Binding = new Avalonia.Data.Binding("Item.Name")
+        });
+
+        grid.ApplyTemplate();
+        grid.UpdateLayout();
+
+        grid.Selection.SelectAt(2); // childB
+        Assert.Contains(2, grid.Selection.SelectedIndexes);
+
+        var viewNotifications = new List<NotifyCollectionChangedEventArgs>();
+        ((INotifyCollectionChanged)view).CollectionChanged += (_, e) => viewNotifications.Add(e);
+
+        root.Children.Move(1, 2);
+
+        if (!Dispatcher.UIThread.CheckAccess())
+        {
+            await Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Background);
+        }
+
+        // The view used to fall back to a full refresh for any move of more than one item, so a
+        // run - which is what an expanded node is - always arrived as a Reset. The rows the caller
+        // took care to describe as moved were reported as the whole collection being replaced.
+        var notification = Assert.Single(viewNotifications);
+        Assert.Equal(NotifyCollectionChangedAction.Move, notification.Action);
+        Assert.Equal(2, notification.OldStartingIndex);
+        Assert.Equal(3, notification.NewStartingIndex);
+
+        Assert.Equal(
+            new[] { "root", "a", "c", "b", "b1" },
+            view.Cast<HierarchicalNode>().Select(node => ((Item)node.Item).Name).ToArray());
+
+        Assert.Equal(3, grid.Selection.SelectedIndex);
+        Assert.Same(childB, grid.Selection.SelectedItem);
+    }
+
+    [Fact]
     public async Task Selection_Remaps_OnMove_DataGridCollectionView_Persists_After_Refresh()
     {
         var root = new Item("root");
@@ -1386,7 +1540,7 @@ public class HierarchicalIntegrationTests
         model.SetRoot(root);
         model.Expand(model.Root!);
 
-        var selection = new DataGridSelectionModel<object>();
+        var selection = CreateSelection(model);
         selection.Select(childA); // "b", the second child before sorting
 
         var sorting = new SortingModel();
@@ -1427,7 +1581,7 @@ public class HierarchicalIntegrationTests
         model.Expand(model.GetNode(1));
         model.Expand(model.GetNode(3)); // expand both children
 
-        var selection = new DataGridSelectionModel<object>();
+        var selection = CreateSelection(model);
         var targetItem = childA.Children[0];
         var initialIndex = model.IndexOf(targetItem);
         selection.Select(targetItem);

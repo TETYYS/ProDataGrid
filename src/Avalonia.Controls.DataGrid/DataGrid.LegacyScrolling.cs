@@ -305,11 +305,7 @@ internal
 
             if (!MathUtilities.AreClose(_verticalOffset, coerced))
             {
-                if (DisplayData != null)
-                {
-                    DisplayData.PendingVerticalScrollHeight = 0;
-                }
-
+                DisplayData.PendingVerticalScrollHeight = 0;
                 SetVerticalOffset(coerced);
             }
             else if (!MathUtilities.AreClose(_vScrollBar.Value, coerced))

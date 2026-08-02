@@ -1599,14 +1599,14 @@ namespace Avalonia.Controls.DataGridTests.Hierarchical;
 
         root.Children.Move(0, 2);
 
-        var changes = args!.Changes;
-        Assert.Equal(2, changes.Count);
-        Assert.Equal(1, changes[0].Index);
-        Assert.Equal(1, changes[0].OldCount);
-        Assert.Equal(0, changes[0].NewCount);
-        Assert.Equal(3, changes[1].Index);
-        Assert.Equal(0, changes[1].OldCount);
-        Assert.Equal(1, changes[1].NewCount);
+        // One change saying the row moved, not a removal plus an insertion saying it was destroyed
+        // and a different one created. "a" never left the list.
+        var change = Assert.Single(args!.Changes);
+        Assert.Equal(FlattenedChangeKind.Move, change.Kind);
+        Assert.Equal(1, change.MovedFromIndex);
+        Assert.Equal(3, change.Index);
+        Assert.Equal(1, change.OldCount);
+        Assert.Equal(1, change.NewCount);
         Assert.Equal("b", ((Item)model.GetItem(1)!).Name);
         Assert.Equal("c", ((Item)model.GetItem(2)!).Name);
         Assert.Equal("a", ((Item)model.GetItem(3)!).Name);
@@ -1642,13 +1642,14 @@ namespace Avalonia.Controls.DataGridTests.Hierarchical;
             model.Flattened.Select(node => ((Item)node.Item).Name).ToArray());
 
         Assert.NotNull(args);
-        Assert.Equal(2, args!.Changes.Count);
-        Assert.Equal(1, args.Changes[0].Index);
-        Assert.Equal(2, args.Changes[0].OldCount);
-        Assert.Equal(0, args.Changes[0].NewCount);
-        Assert.Equal(5, args.Changes[1].Index);
-        Assert.Equal(0, args.Changes[1].OldCount);
-        Assert.Equal(2, args.Changes[1].NewCount);
+
+        // The expanded child travels with its parent, so the run is two rows wide and moves as one.
+        var change = Assert.Single(args!.Changes);
+        Assert.Equal(FlattenedChangeKind.Move, change.Kind);
+        Assert.Equal(1, change.MovedFromIndex);
+        Assert.Equal(5, change.Index);
+        Assert.Equal(2, change.OldCount);
+        Assert.Equal(2, change.NewCount);
     }
 
     [Fact]
@@ -1700,13 +1701,13 @@ namespace Avalonia.Controls.DataGridTests.Hierarchical;
             model.Flattened.Select(node => ((Item)node.Item).Name).ToArray());
 
         Assert.NotNull(args);
-        Assert.Equal(2, args!.Changes.Count);
-        Assert.Equal(0, args.Changes[0].Index);
-        Assert.Equal(2, args.Changes[0].OldCount);
-        Assert.Equal(0, args.Changes[0].NewCount);
-        Assert.Equal(4, args.Changes[1].Index);
-        Assert.Equal(0, args.Changes[1].OldCount);
-        Assert.Equal(2, args.Changes[1].NewCount);
+
+        var change = Assert.Single(args!.Changes);
+        Assert.Equal(FlattenedChangeKind.Move, change.Kind);
+        Assert.Equal(0, change.MovedFromIndex);
+        Assert.Equal(4, change.Index);
+        Assert.Equal(2, change.OldCount);
+        Assert.Equal(2, change.NewCount);
     }
 
     [Fact]
@@ -2578,6 +2579,83 @@ namespace Avalonia.Controls.DataGridTests.Hierarchical;
 
         Assert.Equal(0, root.PropertyChangedSubscriptionCount);
         Assert.Equal(0, root.Children.SubscriptionCount);
+    }
+
+    [Fact]
+    public void SnapshotItemMembership_Keeps_Items_A_Collapsed_Parent_Hides()
+    {
+        var root = new Item("root");
+        var child = new Item("child");
+        var grand = new Item("grand");
+        root.Children.Add(child);
+        child.Children.Add(grand);
+
+        var model = new HierarchicalModel(new HierarchicalOptions
+        {
+            ChildrenSelector = item => ((Item)item).Children,
+            IsLeafSelector = item => ((Item)item).Children.Count == 0,
+            VirtualizeChildren = false
+        });
+
+        model.SetRoot(root);
+        model.ExpandAll();
+        model.Collapse(model.FindNode(child)!);
+
+        // Gone from the visible rows, still in the tree.
+        Assert.Equal(-1, model.IndexOf(grand));
+
+        var contains = model.SnapshotItemMembership();
+
+        Assert.True(contains(root));
+        Assert.True(contains(child));
+        Assert.True(contains(grand));
+    }
+
+    [Fact]
+    public void SnapshotItemMembership_Rejects_An_Item_The_Tree_Never_Held()
+    {
+        var root = new Item("root");
+        root.Children.Add(new Item("child"));
+
+        var model = new HierarchicalModel(new HierarchicalOptions
+        {
+            ChildrenSelector = item => ((Item)item).Children,
+            IsLeafSelector = item => ((Item)item).Children.Count == 0
+        });
+
+        model.SetRoot(root);
+        model.ExpandAll();
+
+        var contains = model.SnapshotItemMembership();
+
+        Assert.False(contains(new Item("stranger")));
+        Assert.False(contains(null));
+    }
+
+    [Fact]
+    public void SnapshotItemMembership_Keeps_Everything_When_A_Branch_Cannot_Be_Enumerated()
+    {
+        var root = new Item("root");
+        var child = new Item("child");
+        root.Children.Add(child);
+        child.Children.Add(new Item("grand"));
+
+        var model = new HierarchicalModel(new HierarchicalOptions
+        {
+            ChildrenSelector = item => ((Item)item).Children,
+            IsLeafSelector = item => ((Item)item).Children.Count == 0,
+            VirtualizeChildren = true
+        });
+
+        model.SetRoot(root);
+        model.ExpandAll();
+        model.Collapse(model.FindNode(child)!);
+
+        // Virtualization threw the collapsed children away, so nothing under `child` can be listed
+        // and no item can be declared missing on the strength of not finding it.
+        var contains = model.SnapshotItemMembership();
+
+        Assert.True(contains(new Item("stranger")));
     }
 
     private static WeakReference<HierarchicalModel> CreateWeakModel(TrackingExpandableItem root)

@@ -57,8 +57,6 @@ namespace Avalonia.Controls.DataGridSelection
         // Cached projection of _insertionOrder into view order. Dropped whenever the selection or the
         // view's ordering changes; rebuilt on demand.
         private IReadOnlyList<object?>? _viewOrdered;
-        // A SelectedIndex set before any view was attached, waiting for one to resolve it against.
-        private int? _pendingIndex;
 
         /// <summary>
         /// Initializes a new instance.
@@ -87,8 +85,15 @@ namespace Avalonia.Controls.DataGridSelection
         public int Count => _selected.Count;
 
         /// <summary>
-        /// When true, selecting an item deselects everything else.
+        /// When true, selecting an item deselects everything else, and any operation naming more than
+        /// one row is refused rather than narrowed.
         /// </summary>
+        /// <remarks>
+        /// Turning this on with several items selected trims down to <see cref="SelectedItem"/> instead
+        /// of throwing. A mode change is not a request for rows, so there is no contradictory request to
+        /// refuse - and the grid sets this itself whenever SelectionMode changes, so throwing would make
+        /// the control throw at itself over a selection the consumer made while the mode still allowed it.
+        /// </remarks>
         public bool SingleSelect
         {
             get => _singleSelect;
@@ -102,17 +107,12 @@ namespace Avalonia.Controls.DataGridSelection
                 _singleSelect = value;
                 if (value && _selected.Count > 1)
                 {
-                    var keep = _hasLead && _selected.Contains(_leadItem) ? _leadItem : FirstInViewOrder();
+                    // SelectedItem already is "the one to keep": the lead when it is still selected,
+                    // and otherwise the first in view order.
+                    var keep = SelectedItem;
                     using (BatchUpdate())
                     {
-                        for (int i = _insertionOrder.Count - 1; i >= 0; i--)
-                        {
-                            var item = _insertionOrder[i];
-                            if (!_comparer.Equals(item, keep))
-                            {
-                                RemoveCore(item);
-                            }
-                        }
+                        ClearCore(except: keep);
                     }
                 }
 
@@ -171,13 +171,31 @@ namespace Avalonia.Controls.DataGridSelection
 
                 return _selected.Count == 0 ? null : FirstInViewOrder();
             }
-            set => SetSelectedItems(value is null ? null : new[] { value });
+            set
+            {
+                // Null is "nothing is selected", which is what the getter reports when nothing is.
+                // A binding must be able to write its own reading back, so this is a clear rather
+                // than a selection of no item.
+                if (value is null)
+                {
+                    Clear();
+                    return;
+                }
+
+                SetSelectedItems(new[] { value });
+            }
         }
 
         /// <summary>
         /// Index of <see cref="SelectedItem"/> in the current view, or -1.
         /// </summary>
         /// <remarks>Computed on every read - it cannot disagree with the view's order.</remarks>
+        /// <exception cref="InvalidOperationException">
+        /// A non-negative index was assigned while the model is not attached to a view.
+        /// </exception>
+        /// <exception cref="ArgumentOutOfRangeException">
+        /// The assigned index is past the end of the view.
+        /// </exception>
         public int SelectedIndex
         {
             get
@@ -187,27 +205,23 @@ namespace Avalonia.Controls.DataGridSelection
             }
             set
             {
-                _pendingIndex = null;
-
                 if (value < 0)
                 {
+                    // The one value that means the same thing with or without rows: nothing is
+                    // selected. It is also what the getter reports when nothing is, so a binding
+                    // can round-trip its own reading without needing a view to do it in.
                     Clear();
                     return;
                 }
 
-                if (_view is null)
+                var view = RequireView(nameof(SelectedIndex));
+
+                if (!view.TryGetItemAt(value, out var item))
                 {
-                    // An index names nothing until there is a view to name it in, so the request is
-                    // held - not the index itself - and turned into an item the moment one arrives.
-                    // Nothing can go stale in between, because nothing has been selected yet.
-                    _pendingIndex = value;
-                    return;
+                    throw IndexOutOfRange(nameof(value), value, view);
                 }
 
-                if (_view.TryGetItemAt(value, out var item))
-                {
-                    SetSelectedItems(new[] { item });
-                }
+                SetSelectedItems(new[] { item });
             }
         }
 
@@ -229,12 +243,24 @@ namespace Avalonia.Controls.DataGridSelection
         public bool IsSelected(object? item) => _selected.Contains(item);
 
         /// <summary>Determines whether the item at <paramref name="index"/> is selected.</summary>
+        /// <exception cref="InvalidOperationException">The model is not attached to a view.</exception>
+        /// <exception cref="ArgumentOutOfRangeException">
+        /// <paramref name="index"/> is past the end of the view.
+        /// </exception>
         public bool IsIndexSelected(int index)
-            => _view is not null && _view.TryGetItemAt(index, out var item) && _selected.Contains(item);
+        {
+            var view = RequireView(nameof(IsIndexSelected));
+            RequireInRange(nameof(index), index, view);
+
+            return view.TryGetItemAt(index, out var item) && _selected.Contains(item);
+        }
 
         /// <summary>Adds <paramref name="item"/> to the selection.</summary>
+        /// <exception cref="InvalidOperationException">The model is not attached to a view.</exception>
         public void Select(object? item)
         {
+            RequireView(nameof(Select));
+
             using (BatchUpdate())
             {
                 if (_singleSelect)
@@ -250,8 +276,11 @@ namespace Avalonia.Controls.DataGridSelection
         }
 
         /// <summary>Removes <paramref name="item"/> from the selection.</summary>
+        /// <exception cref="InvalidOperationException">The model is not attached to a view.</exception>
         public void Deselect(object? item)
         {
+            RequireView(nameof(Deselect));
+
             using (BatchUpdate())
             {
                 RemoveCore(item);
@@ -272,58 +301,82 @@ namespace Avalonia.Controls.DataGridSelection
         }
 
         /// <summary>Selects the item currently at <paramref name="index"/>.</summary>
+        /// <exception cref="InvalidOperationException">The model is not attached to a view.</exception>
+        /// <exception cref="ArgumentOutOfRangeException">
+        /// <paramref name="index"/> is past the end of the view.
+        /// </exception>
         public void SelectAt(int index)
         {
-            if (_view is not null && _view.TryGetItemAt(index, out var item))
+            var view = RequireView(nameof(SelectAt));
+
+            if (!view.TryGetItemAt(index, out var item))
             {
-                Select(item);
+                throw IndexOutOfRange(nameof(index), index, view);
             }
+
+            Select(item);
         }
 
         /// <summary>Deselects the item currently at <paramref name="index"/>.</summary>
+        /// <exception cref="InvalidOperationException">The model is not attached to a view.</exception>
+        /// <exception cref="ArgumentOutOfRangeException">
+        /// <paramref name="index"/> is past the end of the view.
+        /// </exception>
         public void DeselectAt(int index)
         {
-            if (_view is not null && _view.TryGetItemAt(index, out var item))
+            var view = RequireView(nameof(DeselectAt));
+
+            if (!view.TryGetItemAt(index, out var item))
             {
-                Deselect(item);
+                throw IndexOutOfRange(nameof(index), index, view);
             }
+
+            Deselect(item);
         }
 
         /// <summary>
         /// Selects every item between the two indexes inclusive. The range is resolved to items
         /// immediately, so a later reorder moves the selection with the items rather than the positions.
         /// </summary>
+        /// <remarks>
+        /// The two ends may be given in either order - a range dragged upwards is the same range -
+        /// but both have to name rows. An end past the last one is not a range the view can narrow
+        /// to a smaller one on the caller's behalf; it is a range over rows that are not there.
+        /// </remarks>
+        /// <exception cref="InvalidOperationException">
+        /// The model is not attached to a view, or the range covers more than one row while
+        /// <see cref="SingleSelect"/> is on.
+        /// </exception>
+        /// <exception cref="ArgumentOutOfRangeException">
+        /// Either end is past the end of the view.
+        /// </exception>
         public void SelectRange(int fromIndex, int toIndex)
         {
-            if (_view is null)
-            {
-                return;
-            }
+            var view = RequireView(nameof(SelectRange));
+            RequireInRange(nameof(fromIndex), fromIndex, view);
+            RequireInRange(nameof(toIndex), toIndex, view);
 
-            var start = Math.Max(0, Math.Min(fromIndex, toIndex));
-            var end = Math.Min(_view.Count - 1, Math.Max(fromIndex, toIndex));
-            if (start > end)
+            var start = Math.Min(fromIndex, toIndex);
+            var end = Math.Max(fromIndex, toIndex);
+
+            // A range of one row is a range single selection can honour, so the refusal is about the
+            // rows asked for rather than about the method that asked for them.
+            if (_singleSelect && end > start)
             {
-                return;
+                throw SingleSelectRefused(nameof(SelectRange), end - start + 1);
             }
 
             using (BatchUpdate())
             {
-                if (_singleSelect)
-                {
-                    SelectAt(toIndex);
-                    return;
-                }
-
                 for (int i = start; i <= end; i++)
                 {
-                    if (_view.TryGetItemAt(i, out var item))
+                    if (view.TryGetItemAt(i, out var item))
                     {
                         AddCore(item);
                     }
                 }
 
-                if (_view.TryGetItemAt(toIndex, out var lead))
+                if (view.TryGetItemAt(toIndex, out var lead))
                 {
                     SetLead(lead);
                 }
@@ -331,21 +384,24 @@ namespace Avalonia.Controls.DataGridSelection
         }
 
         /// <summary>Deselects every item between the two indexes inclusive.</summary>
+        /// <exception cref="InvalidOperationException">The model is not attached to a view.</exception>
+        /// <exception cref="ArgumentOutOfRangeException">
+        /// Either end is past the end of the view.
+        /// </exception>
         public void DeselectRange(int fromIndex, int toIndex)
         {
-            if (_view is null)
-            {
-                return;
-            }
+            var view = RequireView(nameof(DeselectRange));
+            RequireInRange(nameof(fromIndex), fromIndex, view);
+            RequireInRange(nameof(toIndex), toIndex, view);
 
-            var start = Math.Max(0, Math.Min(fromIndex, toIndex));
-            var end = Math.Min(_view.Count - 1, Math.Max(fromIndex, toIndex));
+            var start = Math.Min(fromIndex, toIndex);
+            var end = Math.Max(fromIndex, toIndex);
 
             using (BatchUpdate())
             {
                 for (int i = start; i <= end; i++)
                 {
-                    if (_view.TryGetItemAt(i, out var item))
+                    if (view.TryGetItemAt(i, out var item))
                     {
                         RemoveCore(item);
                     }
@@ -354,16 +410,26 @@ namespace Avalonia.Controls.DataGridSelection
         }
 
         /// <summary>Selects every item in the view.</summary>
+        /// <remarks>
+        /// Refused under <see cref="SingleSelect"/> unless the view holds at most one row, in which
+        /// case "every item" and "the one item" are the same request.
+        /// </remarks>
+        /// <exception cref="InvalidOperationException">
+        /// The model is not attached to a view, or the view holds more than one row while
+        /// <see cref="SingleSelect"/> is on.
+        /// </exception>
         public void SelectAll()
         {
-            if (_view is null || _singleSelect)
+            var view = RequireView(nameof(SelectAll));
+
+            if (_singleSelect && view.Count > 1)
             {
-                return;
+                throw SingleSelectRefused(nameof(SelectAll), view.Count);
             }
 
             using (BatchUpdate())
             {
-                foreach (var item in _view.Items)
+                foreach (var item in view.Items)
                 {
                     AddCore(item);
                 }
@@ -382,48 +448,60 @@ namespace Avalonia.Controls.DataGridSelection
         /// <summary>
         /// Replaces the selection with <paramref name="items"/> in a single change.
         /// </summary>
+        /// <exception cref="InvalidOperationException">
+        /// The model is not attached to a view, or <paramref name="items"/> names more than one
+        /// distinct item while <see cref="SingleSelect"/> is on.
+        /// </exception>
         public void SetSelectedItems(IEnumerable? items)
         {
+            if (items is null)
+            {
+                // Replacing the selection with nothing is clearing it, which needs no rows.
+                Clear();
+                return;
+            }
+
+            RequireView(nameof(SetSelectedItems));
+
+            // Enumerated once and up front, for two reasons: the caller's sequence need not survive a
+            // second pass, and the count has to be known before anything is applied so that a refusal
+            // leaves the selection exactly as it was.
+            var distinct = new HashSet<object?>(_comparer);
+            var incoming = new List<object?>();
+            foreach (var item in items)
+            {
+                if (distinct.Add(item))
+                {
+                    incoming.Add(item);
+                }
+            }
+
+            // The same item listed twice still names one row, which is why the check is on the
+            // distinct count rather than on how long the caller's sequence happened to be.
+            if (_singleSelect && incoming.Count > 1)
+            {
+                throw SingleSelectRefused(nameof(SetSelectedItems), incoming.Count);
+            }
+
             using (BatchUpdate())
             {
-                var incoming = new HashSet<object?>(_comparer);
-                if (items is not null)
-                {
-                    foreach (var item in items)
-                    {
-                        incoming.Add(item);
-                    }
-                }
-
                 for (int i = _insertionOrder.Count - 1; i >= 0; i--)
                 {
                     var existing = _insertionOrder[i];
-                    if (!incoming.Contains(existing))
+                    if (!distinct.Contains(existing))
                     {
                         RemoveCore(existing);
                     }
                 }
 
-                object? last = null;
-                var any = false;
-                if (items is not null)
+                foreach (var item in incoming)
                 {
-                    foreach (var item in items)
-                    {
-                        if (_singleSelect && any)
-                        {
-                            RemoveCore(last);
-                        }
-
-                        AddCore(item);
-                        last = item;
-                        any = true;
-                    }
+                    AddCore(item);
                 }
 
-                if (any)
+                if (incoming.Count > 0)
                 {
-                    SetLead(last);
+                    SetLead(incoming[^1]);
                 }
             }
         }
@@ -463,15 +541,6 @@ namespace Avalonia.Controls.DataGridSelection
         {
             _view = view;
             InvalidateOrder();
-
-            if (_pendingIndex is { } index && view is not null)
-            {
-                _pendingIndex = null;
-                if (view.TryGetItemAt(index, out var item))
-                {
-                    SetSelectedItems(new[] { item });
-                }
-            }
         }
 
         /// <summary>
@@ -525,6 +594,74 @@ namespace Avalonia.Controls.DataGridSelection
 
         // ---- internals ------------------------------------------------------------------------
 
+        /// <summary>
+        /// The attached view, or an exception for an operation the missing view leaves meaningless.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// Guards every operation whose meaning comes from the view rather than from an item: the
+        /// index-based ones, which name positions in a list that does not exist, and
+        /// <see cref="SelectAll"/>, whose "all" the view alone defines. There is no honest answer to
+        /// "select rows 3 to 7" when there are no rows to count.
+        /// </para>
+        /// <para>
+        /// Returning quietly is the worst of the options - the call looks like it worked, the
+        /// selection stays empty, and the mistake surfaces somewhere else entirely - and holding the
+        /// request until a view arrives is barely better, because it defers a caller's mistake
+        /// instead of reporting it.
+        /// </para>
+        /// <para>
+        /// The item-based operations are not guarded, and that is a limit of this rule rather than a
+        /// pattern to follow: the grid drives them itself before a view exists - from a bound
+        /// SelectedItems collection and from state restore, neither of which controls whether
+        /// ItemsSource has been assigned yet - so guarding them would make the control throw at
+        /// itself over property order.
+        /// </para>
+        /// </remarks>
+        /// <summary>Throws unless <paramref name="index"/> names a row the view has.</summary>
+        private static void RequireInRange(string parameter, int index, IDataGridSelectionView view)
+        {
+            if (index < 0 || index >= view.Count)
+            {
+                throw IndexOutOfRange(parameter, index, view);
+            }
+        }
+
+        /// <summary>
+        /// The exception for an index that names no row, reporting what the caller asked for and
+        /// what was there - a position on its own says nothing about why it was refused.
+        /// </summary>
+        private static ArgumentOutOfRangeException IndexOutOfRange(
+            string parameter,
+            int index,
+            IDataGridSelectionView view)
+            => new(
+                parameter,
+                index,
+                view.Count == 0
+                    ? "The view has no rows, so no index names one."
+                    : $"The view has {view.Count} rows, so the last index that names one is {view.Count - 1}.");
+
+        /// <summary>
+        /// The exception for an operation that named more rows than single selection can hold.
+        /// </summary>
+        /// <remarks>
+        /// Narrowing the request would mean choosing a row on the caller's behalf, and every rule for
+        /// choosing one - the first, the last, the end a drag finished on - is a guess that looks like
+        /// a policy. The caller knows which row it meant; the model does not, so it says so instead of
+        /// silently keeping one and discarding the rest.
+        /// </remarks>
+        private static InvalidOperationException SingleSelectRefused(string operation, int requested)
+            => new(
+                $"{operation} named {requested} rows while SingleSelect is on, which can hold one. " +
+                "Turn SingleSelect off to select a range, or name the single row to select.");
+
+        private IDataGridSelectionView RequireView(string operation)
+            => _view ?? throw new InvalidOperationException(
+                $"{operation} needs a view to resolve against, and this selection model is not " +
+                "attached to one. Assign it to a DataGrid's Selection property first, or select " +
+                "by item with Select, which needs no view.");
+
         private int IndexOf(object? item) => _view?.IndexOf(item) ?? -1;
 
         private object? FirstInViewOrder()
@@ -546,13 +683,15 @@ namespace Avalonia.Controls.DataGridSelection
             }
 
             var result = _insertionOrder.ToArray();
-            var keys = new int[result.Length];
+            var keys = new long[result.Length];
             for (int i = 0; i < result.Length; i++)
             {
                 var index = _view.IndexOf(result[i]);
                 // Items no longer in the view sort after everything else, keeping insertion order
-                // among themselves.
-                keys[i] = index < 0 ? int.MaxValue : index;
+                // among themselves. That last part is what the low half of the key buys: every
+                // absent item shares the same view index, and Array.Sort is not stable, so above
+                // sixteen elements ties come back in an arbitrary - and varying - order.
+                keys[i] = ((long)(index < 0 ? int.MaxValue : index) << 32) | (uint)i;
             }
 
             Array.Sort(keys, result);

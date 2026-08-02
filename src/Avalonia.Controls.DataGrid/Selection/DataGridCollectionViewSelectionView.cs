@@ -25,7 +25,7 @@ namespace Avalonia.Controls.DataGridSelection
     /// notification can only cost time, never correctness.
     /// </para>
     /// </remarks>
-    internal sealed class DataGridCollectionViewSelectionView : IDataGridSelectionView, IDisposable
+    internal sealed class DataGridCollectionViewSelectionView : IDataGridSelectionView, IDataGridSelectionSourceMembership, IDisposable
     {
         private readonly DataGridCollectionView _view;
         private readonly IEqualityComparer<object> _comparer;

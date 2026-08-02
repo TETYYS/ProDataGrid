@@ -203,7 +203,7 @@ internal
             selectedDisplayIndexes = new List<int>();
             isLogicalContiguousRange = false;
 
-            if (_selectedCellsView.Count == 0 || ColumnsInternal == null || ColumnsItemsInternal == null)
+            if (_selectedCellsView.Count == 0)
             {
                 return false;
             }
@@ -293,7 +293,7 @@ internal
             bounds = default;
             isFullyVisible = false;
 
-            if (_selectionOverlay == null || DisplayData == null || ColumnsItemsInternal == null)
+            if (_selectionOverlay == null)
             {
                 return false;
             }

@@ -203,11 +203,6 @@ internal
         {
             get
             {
-                if (ColumnsInternal == null)
-                {
-                    return 0;
-                }
-
                 int leftCount = FrozenColumnCountWithFiller;
                 int totalColumns = ColumnsInternal.DisplayIndexMap.Count;
                 int rightCount = FrozenColumnCountRight;
@@ -276,7 +271,24 @@ internal
                 // Update the estimator with current display state
                 // Pass the collapsed slot count and details count so estimators can accurately calculate
                 int collapsedSlotCount = _collapsedSlotsTable.GetIndexCount(0, DisplayData.LastScrollingSlot);
-                int detailsCount = GetDetailsCountInclusive(0, DisplayData.LastScrollingSlot);
+
+                // Read the details estimate before counting details rather than at its first use below.
+                // Every consumer of the count multiplies it by this estimate, so when it is zero - no
+                // details template, or an estimator that says details add no height - counting costs a
+                // walk of the rows to produce a term worth nothing. Counting is skipped outright then.
+                double rowDetailsEstimate = estimator?.RowDetailsHeightEstimate ?? RowDetailsHeightEstimate;
+                bool detailsAffectHeight = rowDetailsEstimate > 0;
+
+                int detailsCount = detailsAffectHeight ? GetDetailsCountInclusive(0, DisplayData.LastScrollingSlot) : 0;
+
+                // The details past the viewport, counted once here rather than at each use. Both the
+                // estimator's total and the non-estimator branch below want [0, SlotCount - 1], which is
+                // this plus the count above - counting each range once costs one pass over the rows
+                // instead of the two that re-deriving the whole range from scratch would take.
+                int trailingDetailsCount = detailsAffectHeight
+                    ? GetDetailsCountInclusive(DisplayData.LastScrollingSlot + 1, SlotCount - 1)
+                    : 0;
+
                 estimator?.UpdateFromDisplayedRows(
                     DisplayData.FirstScrollingSlot,
                     DisplayData.LastScrollingSlot,
@@ -301,9 +313,6 @@ internal
                 // Height of all rows above the viewport
                 double totalRowsHeight = realizedHeight;
 
-                // Get the effective row details estimate
-                double rowDetailsEstimate = estimator?.RowDetailsHeightEstimate ?? RowDetailsHeightEstimate;
-
                 // Subtract details that were accounted for from the totalRowsHeight
                 totalRowsHeight -= detailsCount * rowDetailsEstimate;
 
@@ -321,7 +330,7 @@ internal
                 if (estimator != null)
                 {
                     var totalCollapsed = _collapsedSlotsTable.GetIndexCount(0, SlotCount - 1);
-                    var totalDetails = GetDetailsCountInclusive(0, SlotCount - 1);
+                    var totalDetails = detailsCount + trailingDetailsCount;
                     var rowGroupHeaderCounts = GetVisibleRowGroupHeaderCounts();
                     double estimatedTotalHeight = estimator.CalculateTotalHeight(SlotCount, totalCollapsed, rowGroupHeaderCounts, totalDetails);
 
@@ -373,7 +382,7 @@ internal
                     totalRowsHeight += RowHeightEstimate * remainingRowCount;
 
                     // Add the rest of the details beyond the viewport
-                    detailsCount += GetDetailsCountInclusive(DisplayData.LastScrollingSlot + 1, SlotCount - 1);
+                    detailsCount += trailingDetailsCount;
                     totalRowsHeight += detailsCount * rowDetailsEstimate;
                 }
                 else
@@ -557,7 +566,7 @@ internal
                 DataConnection?.CollectionView is not IDataGridCollectionView { IsGrouping: true },
                 "Grouped rows are repositioned through the group notifications.");
 
-            if (count <= 0 || oldIndex == newIndex || DataConnection == null)
+            if (count <= 0 || oldIndex == newIndex)
             {
                 return;
             }
@@ -702,6 +711,92 @@ internal
         {
             row.Slot = slot;
             row.Index = RowIndexFromSlot(slot);
+        }
+
+        /// <summary>
+        /// Points the rows starting at <paramref name="rowIndex"/> at the items that have taken
+        /// their place, pairing them off in order.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// A replacement creates and destroys no rows, so the containers stay where they are and are
+        /// simply rebound, and the scroll offset, current cell and details state are left alone.
+        /// Removing the rows and inserting others would end in the same arrangement while reporting
+        /// rows as having left the grid that only changed what they were showing.
+        /// </para>
+        /// <para>
+        /// The selection moves onto the replacements, the same contract the hierarchical path
+        /// follows: a replaced row keeps its selection, a removed row loses it.
+        /// </para>
+        /// </remarks>
+        internal void ReplaceRows(int rowIndex, System.Collections.IList oldItems, System.Collections.IList newItems)
+        {
+            if (rowIndex < 0 || oldItems == null || newItems == null ||
+                oldItems.Count == 0 || oldItems.Count != newItems.Count)
+            {
+                // Nothing here says which new row stands in for which old one, so there is no
+                // replacement to apply. Rebuild rather than guess at the pairing.
+                InitializeElements(recycleRows: true);
+                return;
+            }
+
+            // Worked out before any of the row work below, which reads the collection view and can
+            // set its lazy refresh going; the reset that comes out of that reports the replaced
+            // items as removed and drops their selection before there is anything left to say they
+            // were selected. The pairing is right here in the notification, so this needs to read
+            // nothing but the selection itself.
+            List<(object Replaced, object Replacement)>? selectionTransfers = null;
+            if (_selectionModel is { Count: > 0 })
+            {
+                for (var i = 0; i < oldItems.Count; i++)
+                {
+                    if (ProjectSelectionItem(oldItems[i]) is not { } replaced ||
+                        !_selectionModel.IsSelected(replaced))
+                    {
+                        continue;
+                    }
+
+                    if (ProjectSelectionItem(newItems[i]) is not { } replacement)
+                    {
+                        continue;
+                    }
+
+                    (selectionTransfers ??= new List<(object, object)>()).Add((replaced, replacement));
+                }
+            }
+
+            for (var i = 0; i < newItems.Count; i++)
+            {
+                var index = rowIndex + i;
+                var slot = SlotFromRowIndex(index);
+                if (slot < 0 || slot >= SlotCount || IsGroupSlot(slot))
+                {
+                    continue;
+                }
+
+                if (IsSlotVisible(slot) && DisplayData.GetDisplayedElement(slot) is DataGridRow displayed)
+                {
+                    RebindRow(displayed, index, slot, newItems[i]);
+                }
+            }
+
+            // Rows kept alive outside the realized window - the one being edited, the focused one -
+            // are not in DisplayData but still hold the old item.
+            foreach (DataGridRow row in _loadedRows.ToArray())
+            {
+                var offset = row.Index - rowIndex;
+                if (offset < 0 || offset >= newItems.Count || IsSlotVisible(row.Slot))
+                {
+                    continue;
+                }
+
+                RebindRow(row, row.Index, row.Slot, newItems[offset]);
+            }
+
+            ApplyReplacementSelection(selectionTransfers);
+
+            RequestPointerOverRefresh();
+            InvalidateRowsArrange();
         }
 
         internal bool TryReplacePlaceholderRow(int rowIndex, object newItem)
@@ -890,7 +985,7 @@ internal
 
                 try
                 {
-                    if (DataConnection != null && ColumnsItemsInternal.Count > 0)
+                    if (ColumnsItemsInternal.Count > 0)
                     {
                         AddSlots(DataConnection.Count);
                         AddSlots(DataConnection.Count + RowGroupHeadersTable.IndexCount + RowGroupFootersTable.IndexCount);

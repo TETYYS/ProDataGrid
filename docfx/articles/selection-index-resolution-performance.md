@@ -32,6 +32,10 @@ public sealed class FastItems : ObservableCollection<MyItem>, IDataGridIndexOf
 
 Use this when your data source can efficiently maintain a reference-to-index map.
 
+`TryGetReferenceIndex` is called from layout and selection hot paths, and is only taken because it is
+expected to be cheap. Implementations must not scan the collection: return `false` when the map cannot
+answer, and DataGrid will pick one of the fallbacks below itself.
+
 ## Option 2: `ReferenceIndexResolver`
 
 Provide a resolver delegate per grid when you cannot (or do not want to) change the collection type:
@@ -53,9 +57,13 @@ Return:
 For reference-based item lookup, DataGrid uses:
 
 1. `ReferenceIndexResolver` (if configured)
-2. `IDataGridIndexOf` (if available)
-3. internal cache
-4. linear reference scan fallback
+2. `IDataGridIndexOf` (only if it resolves without scanning)
+3. a scan of the collection view, when the source is a `DataGridCollectionView`
+4. internal cache
+5. linear reference scan fallback
+
+Steps 3-5 are all O(n). Only steps 1 and 2 are fast paths; if neither applies, index resolution costs a
+pass over the data source no matter which fallback runs.
 
 This preserves compatibility while giving fast paths for advanced scenarios.
 

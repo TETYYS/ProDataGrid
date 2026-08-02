@@ -489,11 +489,6 @@ internal
 
         private void UpdateGroupSummaryRowState(DataGridCollectionViewGroup group)
         {
-            if (DisplayData == null)
-            {
-                return;
-            }
-
             foreach (var element in DisplayData.GetScrollingElements())
             {
                 if (element is DataGridRowGroupHeader groupHeader)
@@ -515,11 +510,6 @@ internal
 
         private void UpdateGroupSummaryRowTheme()
         {
-            if (DisplayData == null)
-            {
-                return;
-            }
-
             foreach (var element in DisplayData.GetScrollingElements())
             {
                 if (element is DataGridRowGroupHeader groupHeader)
@@ -541,11 +531,6 @@ internal
 
         private void UpdateGroupSummaryCellAppearance()
         {
-            if (DisplayData == null)
-            {
-                return;
-            }
-
             foreach (var element in DisplayData.GetScrollingElements())
             {
                 if (element is DataGridRowGroupHeader groupHeader)
@@ -561,11 +546,6 @@ internal
 
         private void UpdateGroupSummaryRowOffset()
         {
-            if (DisplayData == null)
-            {
-                return;
-            }
-
             foreach (var element in DisplayData.GetScrollingElements())
             {
                 if (element is DataGridRowGroupHeader groupHeader)
@@ -581,11 +561,6 @@ internal
 
         private void UpdateGroupSummaryRowLayout()
         {
-            if (DisplayData == null)
-            {
-                return;
-            }
-
             foreach (var element in DisplayData.GetScrollingElements())
             {
                 if (element is DataGridRowGroupHeader groupHeader)
@@ -609,11 +584,6 @@ internal
         {
             _totalSummaryRow?.DetachFromGrid();
 
-            if (DisplayData == null)
-            {
-                return;
-            }
-
             foreach (var element in DisplayData.GetScrollingElements())
             {
                 if (element is DataGridRowGroupHeader groupHeader)
@@ -629,11 +599,6 @@ internal
 
         internal void OnGroupSummaryColumnAdded(DataGridColumn column, int index)
         {
-            if (DisplayData == null)
-            {
-                return;
-            }
-
             foreach (var element in DisplayData.GetScrollingElements())
             {
                 if (element is DataGridRowGroupHeader groupHeader)
@@ -649,11 +614,6 @@ internal
 
         internal void OnGroupSummaryColumnRemoved(DataGridColumn column)
         {
-            if (DisplayData == null)
-            {
-                return;
-            }
-
             foreach (var element in DisplayData.GetScrollingElements())
             {
                 if (element is DataGridRowGroupHeader groupHeader)

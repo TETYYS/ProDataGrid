@@ -56,7 +56,7 @@ internal
             }
 
             var column = header.OwningColumn;
-            if (column == null || !column.IsVisible || DataConnection == null || DataConnection.Count == 0)
+            if (column == null || !column.IsVisible || DataConnection.Count == 0)
             {
                 return;
             }
@@ -188,7 +188,7 @@ internal
                 return false;
             }
 
-            if (DataConnection == null || ColumnsItemsInternal == null || ColumnsItemsInternal.Count == 0)
+            if (ColumnsItemsInternal.Count == 0)
             {
                 return false;
             }

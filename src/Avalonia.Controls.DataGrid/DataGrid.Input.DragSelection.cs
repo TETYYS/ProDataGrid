@@ -337,7 +337,7 @@ internal
 
         private bool UpdateHeaderSelectionForDrag(Point position, KeyModifiers modifiers)
         {
-            if (DataConnection == null || DataConnection.Count == 0 || ColumnsItemsInternal == null || ColumnsItemsInternal.Count == 0)
+            if (DataConnection.Count == 0 || ColumnsItemsInternal.Count == 0)
             {
                 return false;
             }
@@ -516,7 +516,9 @@ internal
             _noSelectionChangeCount++;
             try
             {
-                if (!UpdateSelectionAndCurrency(-1, slot, DataGridSelectionAction.SelectFromAnchorToCurrent, scrollIntoView: false))
+                // Additive: the drag decides below what to deselect, off its own anchor rather than
+                // the grid's, and with Ctrl it keeps everything the drag has not passed over.
+                if (!UpdateSelectionAndCurrency(-1, slot, DataGridSelectionAction.AddRangeFromAnchorToCurrent, scrollIntoView: false))
                 {
                     return false;
                 }
@@ -588,7 +590,7 @@ internal
                 return slot >= 0 && slot < SlotCount && !IsGroupSlot(slot);
             }
 
-            if (_rowsPresenter == null || DisplayData == null)
+            if (_rowsPresenter == null)
             {
                 return false;
             }
@@ -771,7 +773,7 @@ internal
 
         private void UpdateCellSelectionForDragCore(int slot, int columnIndex, KeyModifiers modifiers)
         {
-            if (IsSlotOutOfBounds(slot) || DataConnection == null)
+            if (IsSlotOutOfBounds(slot))
             {
                 return;
             }
@@ -782,6 +784,8 @@ internal
             }
 
             KeyboardHelper.GetMetaKeyState(this, modifiers, out bool ctrl, out _);
+
+            using var columnsDelta = BeginSelectedColumnsDelta();
 
             var added = new List<DataGridCellInfo>();
             var removed = new List<DataGridCellInfo>();
@@ -895,7 +899,7 @@ internal
 
         private void RemoveCellSelectionRangeByDisplayIndex(int startRowIndex, int endRowIndex, int startDisplayIndex, int endDisplayIndex, List<DataGridCellInfo> removedCollector)
         {
-            if (DataConnection == null || ColumnsItemsInternal == null || startRowIndex > endRowIndex)
+            if (startRowIndex > endRowIndex)
             {
                 return;
             }
@@ -1100,7 +1104,7 @@ internal
                 return;
             }
 
-            if (DisplayData == null || DataConnection == null || DisplayData.NumDisplayedScrollingElements == 0)
+            if (DisplayData.NumDisplayedScrollingElements == 0)
             {
                 return;
             }

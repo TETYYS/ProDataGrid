@@ -76,7 +76,21 @@ namespace Avalonia.Controls.DataGridSelection
         protected override void OnSelectionChanged(DataGridSelectionModelChangedEventArgs e)
         {
             base.OnSelectionChanged(e);
-            SelectionChanged?.Invoke(this, (DataGridSelectionModelChangedEventArgs<T>)e);
+
+            if (SelectionChanged is not { } handler)
+            {
+                return;
+            }
+
+            // Normally this is the very object CreateChangedArgs made just above. It need not be:
+            // CreateChangedArgs is an extension point, and a derived model that overrides it to
+            // return args of its own is entitled to - so the typed event is rebuilt from what
+            // arrived rather than cast to what was expected. Casting made overriding one virtual
+            // method break another.
+            var typed = e as DataGridSelectionModelChangedEventArgs<T>
+                ?? new DataGridSelectionModelChangedEventArgs<T>(e.SelectedItems, e.DeselectedItems);
+
+            handler(this, typed);
         }
 
         private sealed class Untyped : IEqualityComparer<object?>

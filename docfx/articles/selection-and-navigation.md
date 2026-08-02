@@ -36,6 +36,15 @@ ProDataGrid routes row selection through Avalonia's `SelectionModel<object?>`, g
 - Multi-select gestures and `SelectionMode` map to the model (`SelectionMode=Single` maps to `SingleSelect=true`).
 - A thin adapter keeps row index to slot mapping internal, so custom selection models can be injected later.
 
+### Single selection refuses multi-row requests
+
+Under `SingleSelect`, `SelectRange`, `SelectAll`, and `SetSelectedItems` throw `InvalidOperationException` when they name more than one row, rather than silently keeping one and discarding the rest. Narrowing the request would mean picking a row on your behalf, and every rule for picking one is a guess that reads like a policy. The check is on the rows asked for, not the method asking: `SelectRange(2, 2)`, `SelectAll()` over a one-row view, and `SetSelectedItems` given the same item twice all name one row and are allowed. A refusal happens before anything is applied, so the selection is left exactly as it was.
+
+`Select(item)` is unaffected — replacing the selected row is what single selection is for. Two cases narrow rather than throw, because neither is a caller naming rows:
+
+- Setting `SingleSelect = true` with several rows selected trims to `SelectedItem`. `SelectionMode` changes go through here, so throwing would make the grid throw at itself.
+- A bound `SelectedItems` collection holding several rows is trimmed to its last entry and the consumer's collection is trimmed to match. That collection is a state the consumer arrived at, not a request, and a collection notification is not something it can catch.
+
 If you need a custom selection model implementation, set `SelectionModelFactory` in code before the grid is loaded or assign `Selection` directly to an `ISelectionModel` instance.
 
 ## SelectedItems and SelectedCells

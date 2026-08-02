@@ -176,7 +176,7 @@ namespace Avalonia.Controls
 
         private void RefreshHierarchicalIndentation()
         {
-            if (!_hierarchicalRowsEnabled || DisplayData == null)
+            if (!_hierarchicalRowsEnabled)
             {
                 return;
             }
@@ -206,7 +206,7 @@ namespace Avalonia.Controls
                     var rowIndex = RowIndexFromSlot(slot);
 
                     object dataItem = null;
-                    if (DataConnection != null && rowIndex >= 0 && rowIndex < DataConnection.Count)
+                    if (rowIndex >= 0 && rowIndex < DataConnection.Count)
                     {
                         dataItem = DataConnection.GetDataItem(rowIndex);
                         if (!ReferenceEquals(row.DataContext, dataItem))

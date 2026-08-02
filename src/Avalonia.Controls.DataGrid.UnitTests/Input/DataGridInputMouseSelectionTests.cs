@@ -48,6 +48,72 @@ public class DataGridInputMouseSelectionTests
     }
 
     [AvaloniaFact]
+    public void MouseLeft_ShiftClick_Inside_Existing_Range_Shrinks_It()
+    {
+        var (grid, items) = CreateGrid(rowCount: 5, selectionUnit: DataGridSelectionUnit.FullRow, selectionMode: DataGridSelectionMode.Extended);
+
+        ClickSlot(grid, rowIndex: 0);
+        ClickSlot(grid, rowIndex: 4, modifiers: KeyModifiers.Shift);
+
+        Assert.Equal(new[] { items[0], items[1], items[2], items[3], items[4] }, SelectedInRowOrder(grid));
+
+        // Shift-clicking back inside the range re-runs it from the anchor, so the rows past the
+        // click are dropped rather than left over from the previous shift-click.
+        ClickSlot(grid, rowIndex: 2, modifiers: KeyModifiers.Shift);
+
+        Assert.Equal(new[] { items[0], items[1], items[2] }, SelectedInRowOrder(grid));
+    }
+
+    [AvaloniaFact]
+    public void MouseLeft_ShiftClick_Across_Anchor_Replaces_Range()
+    {
+        var (grid, items) = CreateGrid(rowCount: 5, selectionUnit: DataGridSelectionUnit.FullRow, selectionMode: DataGridSelectionMode.Extended);
+
+        ClickSlot(grid, rowIndex: 2);
+        ClickSlot(grid, rowIndex: 4, modifiers: KeyModifiers.Shift);
+
+        Assert.Equal(new[] { items[2], items[3], items[4] }, SelectedInRowOrder(grid));
+
+        ClickSlot(grid, rowIndex: 0, modifiers: KeyModifiers.Shift);
+
+        Assert.Equal(new[] { items[0], items[1], items[2] }, SelectedInRowOrder(grid));
+    }
+
+    [AvaloniaFact]
+    public void MouseLeft_ShiftClick_Discards_Selection_Outside_Range()
+    {
+        var (grid, items) = CreateGrid(rowCount: 5, selectionUnit: DataGridSelectionUnit.FullRow, selectionMode: DataGridSelectionMode.Extended);
+        var ctrl = GetCtrlOrCmdModifier(grid);
+
+        ClickSlot(grid, rowIndex: 4);
+        ClickSlot(grid, rowIndex: 0, modifiers: ctrl);
+
+        Assert.Equal(new[] { items[0], items[4] }, SelectedInRowOrder(grid));
+
+        // The anchor moved to row 0 with the ctrl-click, so row 4 is outside the new range.
+        ClickSlot(grid, rowIndex: 1, modifiers: KeyModifiers.Shift);
+
+        Assert.Equal(new[] { items[0], items[1] }, SelectedInRowOrder(grid));
+    }
+
+    [AvaloniaFact]
+    public void MouseLeft_CtrlShiftClick_Keeps_Selection_Outside_Range()
+    {
+        var (grid, items) = CreateGrid(rowCount: 5, selectionUnit: DataGridSelectionUnit.FullRow, selectionMode: DataGridSelectionMode.Extended);
+        var ctrl = GetCtrlOrCmdModifier(grid);
+
+        ClickSlot(grid, rowIndex: 0);
+        ClickSlot(grid, rowIndex: 4, modifiers: ctrl);
+
+        Assert.Equal(new[] { items[0], items[4] }, SelectedInRowOrder(grid));
+
+        // Ctrl+Shift extends from the anchor without discarding what is already selected.
+        ClickSlot(grid, rowIndex: 2, modifiers: ctrl | KeyModifiers.Shift);
+
+        Assert.Equal(new[] { items[0], items[2], items[3], items[4] }, SelectedInRowOrder(grid));
+    }
+
+    [AvaloniaFact]
     public void MouseLeft_RowDetails_Collapses_On_Ctrl_Deselect()
     {
         var (grid, _) = CreateGrid(selectionUnit: DataGridSelectionUnit.FullRow, selectionMode: DataGridSelectionMode.Extended);
@@ -2363,6 +2429,21 @@ public class DataGridInputMouseSelectionTests
     private static bool InvokeUpdateStateOnMouseLeftButtonDown(DataGrid grid, PointerPressedEventArgs args, int columnIndex, int slot, bool allowEdit)
     {
         return grid.UpdateStateOnMouseLeftButtonDown(args, columnIndex, slot, allowEdit);
+    }
+
+    private static void ClickSlot(DataGrid grid, int rowIndex, KeyModifiers modifiers = KeyModifiers.None)
+    {
+        InvokeUpdateStateOnMouseLeftButtonDown(
+            grid,
+            CreateLeftPointerArgs(grid, modifiers),
+            columnIndex: 0,
+            slot: grid.SlotFromRowIndex(rowIndex),
+            allowEdit: false);
+    }
+
+    private static RowItem[] SelectedInRowOrder(DataGrid grid)
+    {
+        return grid.SelectedItems.Cast<RowItem>().OrderBy(item => item.A).ToArray();
     }
 
     private static bool InvokeUpdateStateOnMouseRightButtonDown(DataGrid grid, PointerPressedEventArgs args, int columnIndex, int slot, bool allowEdit)

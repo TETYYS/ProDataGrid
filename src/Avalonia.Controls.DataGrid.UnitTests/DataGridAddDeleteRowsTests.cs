@@ -600,6 +600,149 @@ public class DataGridAddDeleteRowsTests
         window.Close();
     }
 
+    [AvaloniaFact]
+    public void Replace_Rebinds_The_Row_Instead_Of_Recreating_It()
+    {
+        var items = new ObservableCollection<TestItem>
+        {
+            new TestItem { Name = "A" },
+            new TestItem { Name = "B" },
+            new TestItem { Name = "C" }
+        };
+
+        var (window, grid) = CreateReplaceGrid(items);
+
+        var rowBefore = GetRow(grid, 1);
+        Assert.Same(items[1], rowBefore.DataContext);
+
+        var replacement = new TestItem { Name = "B2" };
+        items[1] = replacement; // used to throw NotSupportedException
+        PumpLayout(grid);
+
+        // The same container, pointed at the new item. A removal followed by an insertion would
+        // have thrown this row away and built another.
+        var rowAfter = GetRow(grid, 1);
+        Assert.Same(rowBefore, rowAfter);
+        Assert.Same(replacement, rowAfter.DataContext);
+        Assert.Equal(3, grid.SlotCount);
+
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void Replace_Moves_The_Selection_Onto_The_Replacement()
+    {
+        var items = new ObservableCollection<TestItem>
+        {
+            new TestItem { Name = "A" },
+            new TestItem { Name = "B" },
+            new TestItem { Name = "C" }
+        };
+
+        var (window, grid) = CreateReplaceGrid(items);
+
+        var original = items[1];
+        grid.Selection.SelectAt(1);
+        PumpLayout(grid);
+        Assert.Contains(1, grid.Selection.SelectedIndexes);
+
+        var replacement = new TestItem { Name = "B2" };
+        items[1] = replacement;
+        PumpLayout(grid);
+
+        // A replaced row keeps its selection; only a removed one loses it. The position is
+        // unchanged because the replacement occupies it.
+        Assert.Contains(1, grid.Selection.SelectedIndexes);
+        Assert.Contains(replacement, grid.Selection.SelectedItems);
+        Assert.DoesNotContain(original, grid.Selection.SelectedItems);
+        Assert.True(grid.GetRowSelectionFromRowIndex(1));
+
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void Replace_Leaves_Other_Rows_Selection_Alone()
+    {
+        var items = new ObservableCollection<TestItem>
+        {
+            new TestItem { Name = "A" },
+            new TestItem { Name = "B" },
+            new TestItem { Name = "C" }
+        };
+
+        var (window, grid) = CreateReplaceGrid(items);
+
+        var untouched = items[2];
+        grid.Selection.SelectAt(2);
+        PumpLayout(grid);
+
+        items[1] = new TestItem { Name = "B2" };
+        PumpLayout(grid);
+
+        Assert.Contains(untouched, grid.Selection.SelectedItems);
+        Assert.Contains(2, grid.Selection.SelectedIndexes);
+        Assert.True(grid.GetRowSelectionFromRowIndex(2));
+        Assert.False(grid.GetRowSelectionFromRowIndex(1));
+
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void Replace_Through_A_CollectionView_Keeps_The_Selection()
+    {
+        var items = new ObservableCollection<TestItem>
+        {
+            new TestItem { Name = "A" },
+            new TestItem { Name = "B" },
+            new TestItem { Name = "C" }
+        };
+
+        var view = new DataGridCollectionView(items);
+        var (window, grid) = CreateReplaceGrid(view);
+
+        var original = items[1];
+        grid.Selection.SelectAt(1);
+        PumpLayout(grid);
+        Assert.Contains(1, grid.Selection.SelectedIndexes);
+
+        var replacement = new TestItem { Name = "B2" };
+        items[1] = replacement;
+        PumpLayout(grid);
+
+        Assert.Contains(replacement, grid.Selection.SelectedItems);
+        Assert.DoesNotContain(original, grid.Selection.SelectedItems);
+        Assert.Contains(1, grid.Selection.SelectedIndexes);
+
+        window.Close();
+    }
+
+    private static (Window Window, DataGrid Grid) CreateReplaceGrid(System.Collections.IEnumerable itemsSource)
+    {
+        var window = new Window { Width = 400, Height = 300 };
+        window.SetThemeStyles();
+
+        var grid = new DataGrid
+        {
+            ItemsSource = itemsSource,
+            AutoGenerateColumns = false,
+            CanUserAddRows = false,
+            SelectionMode = DataGridSelectionMode.Extended
+        };
+
+        grid.Columns.Add(new DataGridTextColumn { Header = "Name", Binding = new Binding("Name") });
+
+        window.Content = grid;
+        window.Show();
+        PumpLayout(grid);
+        return (window, grid);
+    }
+
+    private static DataGridRow GetRow(DataGrid grid, int rowIndex)
+    {
+        var slot = grid.SlotFromRowIndex(rowIndex);
+        return Assert.IsType<DataGridRow>(grid.DisplayData.GetDisplayedElement(slot));
+    }
+
     private static void PumpLayout(DataGrid grid)
     {
         Dispatcher.UIThread.RunJobs();

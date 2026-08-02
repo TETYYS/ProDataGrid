@@ -136,7 +136,26 @@ internal
         None,
         RemoveCurrentFromSelection,
         SelectCurrent,
-        SelectFromAnchorToCurrent
+
+        /// <summary>
+        /// Makes the anchor-to-current range the selection: rows inside it are selected and anything
+        /// selected outside it is dropped.
+        /// </summary>
+        /// <remarks>
+        /// Dropping the rows outside the range is what lets a second shift-click revise the first one
+        /// instead of only ever growing the selection. The anchor stays put, so the range is always
+        /// re-derived from it rather than from where the previous shift-click landed.
+        /// </remarks>
+        SelectFromAnchorToCurrent,
+
+        /// <summary>
+        /// Adds the anchor-to-current range to the selection, leaving rows outside it as they are.
+        /// </summary>
+        /// <remarks>
+        /// The Ctrl-held variant, for extending a selection that was assembled row by row. Also used by
+        /// the drag paths, which decide for themselves what to deselect as the pointer moves.
+        /// </remarks>
+        AddRangeFromAnchorToCurrent
     }
 
     /// <summary>

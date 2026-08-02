@@ -50,7 +50,7 @@ namespace Avalonia.Controls
         internal bool TryGetItemForSlot(int slot, out object item)
         {
             item = null;
-            if (slot < 0 || DataConnection == null || IsGroupSlot(slot))
+            if (slot < 0 || IsGroupSlot(slot))
             {
                 return false;
             }
@@ -83,27 +83,55 @@ namespace Avalonia.Controls
         /// </summary>
         /// <remarks>
         /// Derived on demand from the selected items rather than tracked alongside them, which is why
-        /// nothing has to be re-indexed when rows move: selection order follows view order, so slots
-        /// come out ascending without sorting.
+        /// nothing has to be re-indexed when rows move. Selection order and row order are usually the
+        /// same order but are not the same thing - a hierarchical model behind a sorted
+        /// <see cref="DataGridCollectionView"/> keeps its selection in model order while the rows are
+        /// in view order - so the slots are sorted rather than assumed to come out ascending.
         /// </remarks>
         internal IEnumerable<int> GetSelectedSlots()
         {
+            if (_selectionModel.Count == 0)
+            {
+                return Array.Empty<int>();
+            }
+
+            var slots = new List<int>(_selectionModel.Count);
             foreach (var item in _selectionModel.SelectedItems)
             {
                 var slot = SlotForItem(item);
                 if (slot >= 0)
                 {
-                    yield return slot;
+                    slots.Add(slot);
                 }
             }
+
+            slots.Sort();
+            return slots;
         }
 
+        /// <summary>
+        /// The number of selected rows whose slot falls within <paramref name="lowerBound"/> and
+        /// <paramref name="upperBound"/> inclusive.
+        /// </summary>
+        /// <remarks>
+        /// Walks the slot range and asks the selection about each row rather than walking the selection
+        /// and resolving each item back to a slot. <see cref="DataGridSelectionModel.IsSelected"/> is a
+        /// hash lookup, while resolving an item to its slot costs a scan of the data source unless it can
+        /// offer a fast index - so the second shape is O(selected * rows) and this one is O(range).
+        /// </remarks>
         internal int GetSelectedSlotCount(int lowerBound, int upperBound)
         {
-            var count = 0;
-            foreach (var slot in GetSelectedSlots())
+            if (_selectionModel == null || _selectionModel.Count == 0)
             {
-                if (slot >= lowerBound && slot <= upperBound)
+                return 0;
+            }
+
+            var first = Math.Max(lowerBound, 0);
+            var last = Math.Min(upperBound, SlotCount - 1);
+            var count = 0;
+            for (var slot = first; slot <= last; slot++)
+            {
+                if (GetRowSelection(slot))
                 {
                     count++;
                 }
@@ -177,7 +205,7 @@ namespace Avalonia.Controls
 
         internal bool GetRowSelectionFromRowIndex(int rowIndex)
         {
-            if (rowIndex < 0 || DataConnection == null || rowIndex >= DataConnection.Count)
+            if (rowIndex < 0 || rowIndex >= DataConnection.Count)
             {
                 return false;
             }
@@ -347,11 +375,6 @@ namespace Avalonia.Controls
 
         private void ApplySelectionVisuals(DataGridSelectionModelChangedEventArgs e)
         {
-            if (DisplayData == null)
-            {
-                return;
-            }
-
             Apply(e.DeselectedItems, isSelected: false);
             Apply(e.SelectedItems, isSelected: true);
 

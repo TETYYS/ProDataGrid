@@ -125,6 +125,75 @@ public class DataGridSelectedItemsTests
     }
 
     [AvaloniaFact]
+    public void Adding_To_Bound_SelectedItems_In_Single_Mode_Trims_The_Bound_Collection()
+    {
+        var vm = new SelectionViewModel();
+        var grid = CreateGrid(vm.Items);
+        grid.SelectionMode = DataGridSelectionMode.Single;
+
+        grid.Bind(DataGrid.SelectedItemsProperty, new Binding(nameof(SelectionViewModel.SelectedItems))
+        {
+            Mode = BindingMode.TwoWay,
+            Source = vm
+        });
+
+        vm.SelectedItems.Add(vm.Items[1]);
+        vm.SelectedItems.Add(vm.Items[3]);
+
+        grid.UpdateLayout();
+
+        // Single mode keeps the last one. The consumer owns its collection and nothing else will
+        // correct it, so it has to be trimmed here or it goes on claiming two rows are selected.
+        Assert.Equal(new object[] { vm.Items[3] }, vm.SelectedItems.ToArray());
+        Assert.Equal(vm.Items[3], grid.SelectedItem);
+
+        var rows = GetRows(grid);
+        Assert.True(rows.First(x => x.Index == 3).IsSelected);
+        Assert.All(rows.Where(x => x.Index != 3), r => Assert.False(r.IsSelected));
+    }
+
+    [AvaloniaFact]
+    public void Assigning_A_Multi_Item_SelectedItems_In_Single_Mode_Trims_The_Bound_Collection()
+    {
+        var vm = new SelectionViewModel();
+        vm.SelectedItems.Add(vm.Items[0]);
+        vm.SelectedItems.Add(vm.Items[2]);
+
+        var grid = CreateGrid(vm.Items);
+        grid.SelectionMode = DataGridSelectionMode.Single;
+
+        grid.Bind(DataGrid.SelectedItemsProperty, new Binding(nameof(SelectionViewModel.SelectedItems))
+        {
+            Mode = BindingMode.TwoWay,
+            Source = vm
+        });
+
+        grid.UpdateLayout();
+
+        Assert.Equal(new object[] { vm.Items[2] }, vm.SelectedItems.ToArray());
+        Assert.Equal(vm.Items[2], grid.SelectedItem);
+    }
+
+    [AvaloniaFact]
+    public void SelectAll_Is_A_NoOp_In_Single_Mode()
+    {
+        var vm = new SelectionViewModel();
+        var grid = CreateGrid(vm.Items);
+        grid.SelectionMode = DataGridSelectionMode.Single;
+        grid.SelectedItem = vm.Items[1];
+        grid.UpdateLayout();
+
+        // The row-by-row path underneath lets each row replace the one before it, so this used to
+        // leave the last row selected - which is not "all rows" under any reading, and disagreed
+        // with the selection model, which refuses the same request outright.
+        grid.SelectAll();
+        grid.UpdateLayout();
+
+        Assert.Equal(vm.Items[1], grid.SelectedItem);
+        Assert.Equal(new object[] { vm.Items[1] }, grid.SelectedItems.Cast<object>().ToArray());
+    }
+
+    [AvaloniaFact]
     public void Removing_From_Bound_SelectedItems_Deselects_Row()
     {
         var vm = new SelectionViewModel();

@@ -18,7 +18,7 @@ internal
     {
         private void ApplyFillModel(DataGridCellRange source, DataGridCellRange target)
         {
-            if (DataConnection == null || IsReadOnly || source == target)
+            if (IsReadOnly || source == target)
             {
                 return;
             }
@@ -44,7 +44,7 @@ internal
         {
             value = null;
 
-            if (DataConnection == null || rowIndex < 0 || rowIndex >= DataConnection.Count)
+            if (rowIndex < 0 || rowIndex >= DataConnection.Count)
             {
                 return false;
             }
@@ -83,7 +83,7 @@ internal
 
         internal bool TrySetFillCellText(int rowIndex, int columnIndex, string text)
         {
-            if (DataConnection == null || rowIndex < 0 || rowIndex >= DataConnection.Count)
+            if (rowIndex < 0 || rowIndex >= DataConnection.Count)
             {
                 return false;
             }

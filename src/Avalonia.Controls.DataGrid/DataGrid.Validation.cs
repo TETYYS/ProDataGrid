@@ -183,18 +183,15 @@ internal
         {
             var hasError = false;
 
-            if (DisplayData != null)
+            for (int slot = DisplayData.FirstScrollingSlot;
+                slot > -1 && slot <= DisplayData.LastScrollingSlot;
+                slot++)
             {
-                for (int slot = DisplayData.FirstScrollingSlot;
-                    slot > -1 && slot <= DisplayData.LastScrollingSlot;
-                    slot++)
+                if (DisplayData.GetDisplayedElement(slot) is DataGridRow row &&
+                    (!row.IsValid || row.ValidationSeverity == DataGridValidationSeverity.Error))
                 {
-                    if (DisplayData.GetDisplayedElement(slot) is DataGridRow row &&
-                        (!row.IsValid || row.ValidationSeverity == DataGridValidationSeverity.Error))
-                    {
-                        hasError = true;
-                        break;
-                    }
+                    hasError = true;
+                    break;
                 }
             }
 

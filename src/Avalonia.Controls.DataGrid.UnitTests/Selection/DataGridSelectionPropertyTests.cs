@@ -29,10 +29,10 @@ public class DataGridSelectionPropertyTests
     {
         var items = new ObservableCollection<string> { "A", "B", "C" };
         var selectionModel = new DataGridSelectionModel<string> { SingleSelect = false };
-        selectionModel.Select("B"); // preselect before wiring
 
         var grid = CreateGrid(items);
-        grid.Selection = selectionModel;
+        grid.Selection = selectionModel; // wire first: a model no grid holds has nowhere to select
+        selectionModel.Select("B");
         grid.UpdateLayout();
 
         Assert.Equal("B", grid.SelectedItem);
@@ -59,7 +59,7 @@ public class DataGridSelectionPropertyTests
     }
 
     [AvaloniaFact]
-    public void Selection_Made_Before_Attaching_Resolves_Against_The_View()
+    public void Selection_Made_After_Attaching_Resolves_Against_The_View()
     {
         var items = new ObservableCollection<string> { "A", "B", "C" };
         var grid = CreateGrid(items);
@@ -69,9 +69,12 @@ public class DataGridSelectionPropertyTests
         // need retargeting is now simply not expressible.
         var selectionModel = new DataGridSelectionModel<object>();
 
-        selectionModel.Select(items[1]);
+        // Handed to the grid before anything is selected into it: a model nobody is showing has
+        // nowhere to put a selection, so it refuses one.
+        Assert.Throws<InvalidOperationException>(() => selectionModel.Select(items[1]));
 
         grid.Selection = selectionModel;
+        selectionModel.Select(items[1]);
         grid.UpdateLayout();
 
         SelectionSource.AssertTracksView(grid, selectionModel);
@@ -246,10 +249,10 @@ public class DataGridSelectionPropertyTests
     {
         var items = new ObservableCollection<string> { "A", "B", "C" };
         var selectionModel = new DataGridSelectionModel<string> { SingleSelect = false };
-        selectionModel.Select("B"); // select before attaching, to verify the selection carries over
 
         var grid = CreateGrid(items);
-        grid.Selection = selectionModel;
+        grid.Selection = selectionModel; // wire first: a model no grid holds has nowhere to select
+        selectionModel.Select("B");
         grid.UpdateLayout();
 
         var selected = items[1];
@@ -316,7 +319,7 @@ public class DataGridSelectionPropertyTests
     }
 
     [AvaloniaFact]
-    public void Deferred_SelectedIndex_Before_ItemsSource_Is_Applied()
+    public void SelectedIndex_Before_ItemsSource_Names_A_Row_That_Is_Not_There()
     {
         var items = new ObservableCollection<string> { "A", "B", "C" };
 
@@ -334,7 +337,10 @@ public class DataGridSelectionPropertyTests
             AutoGenerateColumns = true
         };
 
-        grid.Selection.SelectedIndex = 1;
+        // Row 1 of a grid with no rows. This used to be held and applied once ItemsSource arrived,
+        // which made a mistimed assignment take effect later instead of being reported where it was
+        // made.
+        Assert.Throws<ArgumentOutOfRangeException>(() => grid.Selection.SelectedIndex = 1);
 
         root.Content = grid;
         root.Show();
@@ -342,9 +348,68 @@ public class DataGridSelectionPropertyTests
         grid.ItemsSource = items;
         grid.UpdateLayout();
 
+        // Nothing was carried over from the rejected write.
+        Assert.Null(grid.SelectedItem);
+        Assert.Equal(-1, grid.SelectedIndex);
+
+        // And the same assignment works once there are rows to name.
+        grid.Selection.SelectedIndex = 1;
+
         Assert.Equal("B", grid.SelectedItem);
         Assert.Equal(1, grid.SelectedIndex);
         Assert.Equal(new[] { "B" }, grid.SelectedItems.Cast<string>());
+    }
+
+    [AvaloniaFact]
+    public void The_Order_The_Grids_Properties_Are_Set_In_Does_Not_Change_The_Selection()
+    {
+        // The two assignments a grid needs, in both orders. In XAML they are just attributes, and
+        // which one the markup happens to list first is not a distinction the author is making - so
+        // it must not be one the selection can tell apart. It used to be: assigning Selection first
+        // left the model without a view, and the same SelectedItem then took a different path.
+        static DataGrid Build(bool selectionFirst, ObservableCollection<string> items)
+        {
+            var grid = new DataGrid
+            {
+                SelectionMode = DataGridSelectionMode.Extended,
+                AutoGenerateColumns = true
+            };
+
+            var selection = new DataGridSelectionModel<string>();
+
+            if (selectionFirst)
+            {
+                grid.Selection = selection;
+                grid.ItemsSource = items;
+            }
+            else
+            {
+                grid.ItemsSource = items;
+                grid.Selection = selection;
+            }
+
+            return grid;
+        }
+
+        foreach (var selectionFirst in new[] { true, false })
+        {
+            var items = new ObservableCollection<string> { "A", "B", "C" };
+            var root = new Window { Width = 250, Height = 150 };
+            root.SetThemeStyles();
+
+            var grid = Build(selectionFirst, items);
+            root.Content = grid;
+            root.Show();
+            grid.UpdateLayout();
+
+            grid.Selection.SelectedIndex = 1;
+
+            Assert.Equal("B", grid.SelectedItem);
+            Assert.Equal(1, grid.SelectedIndex);
+            Assert.Equal(new[] { "B" }, grid.SelectedItems.Cast<string>());
+
+            root.Close();
+        }
     }
 
     [AvaloniaFact]

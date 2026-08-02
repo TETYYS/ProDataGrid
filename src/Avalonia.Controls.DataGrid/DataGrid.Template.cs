@@ -457,7 +457,7 @@ internal
                 _noCurrentCellChangeCount++;
                 CancelEdit(DataGridEditingUnit.Row, raiseEvents: false);
 
-                if (DataConnection != null && ColumnsItemsInternal.Count > 0)
+                if (ColumnsItemsInternal.Count > 0)
                 {
                     // Fast path for tab reattach: rows are already unloaded during detach.
                     RefreshRows(recycleRows: true, clearRows: false);

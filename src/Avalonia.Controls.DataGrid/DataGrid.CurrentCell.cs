@@ -339,7 +339,7 @@ internal
             columnIndex = -1;
             slot = -1;
 
-            if (!cellInfo.IsValid || DataConnection == null)
+            if (!cellInfo.IsValid)
             {
                 return false;
             }
@@ -391,11 +391,6 @@ internal
 
         private int ResolveRowIndex(DataGridCellInfo cellInfo)
         {
-            if (DataConnection == null)
-            {
-                return -1;
-            }
-
             int rowIndex = cellInfo.RowIndex;
             if (rowIndex >= 0 && rowIndex < DataConnection.Count)
             {
@@ -438,7 +433,7 @@ internal
 
         private DataGridCellInfo CreateCurrentCellInfo()
         {
-            if (CurrentColumnIndex < 0 || CurrentSlot < 0 || DataConnection == null)
+            if (CurrentColumnIndex < 0 || CurrentSlot < 0)
             {
                 return DataGridCellInfo.Unset;
             }

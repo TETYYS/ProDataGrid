@@ -384,7 +384,7 @@ internal
                         slot = firstVisibleSlot;
                         columnIndex = CurrentColumnIndex;
                         action = (SelectionMode == DataGridSelectionMode.Extended)
-                            ? DataGridSelectionAction.SelectFromAnchorToCurrent
+                            ? DataGridSelectionAction.AddRangeFromAnchorToCurrent
                             : DataGridSelectionAction.SelectCurrent;
                     }
                     else
@@ -670,7 +670,7 @@ internal
                 else
                 {
                     DataGridSelectionAction action = (shift && SelectionMode == DataGridSelectionMode.Extended)
-                        ? DataGridSelectionAction.SelectFromAnchorToCurrent
+                        ? DataGridSelectionAction.AddRangeFromAnchorToCurrent
                         : DataGridSelectionAction.SelectCurrent;
 
                     UpdateSelectionAndCurrency(firstVisibleColumnIndex, firstVisibleSlot, action, scrollIntoView: true);
@@ -712,7 +712,7 @@ internal
                 else
                 {
                     DataGridSelectionAction action = (shift && SelectionMode == DataGridSelectionMode.Extended)
-                        ? DataGridSelectionAction.SelectFromAnchorToCurrent
+                        ? DataGridSelectionAction.AddRangeFromAnchorToCurrent
                         : DataGridSelectionAction.SelectCurrent;
 
                     UpdateSelectionAndCurrency(lastVisibleColumnIndex, lastVisibleSlot, action, scrollIntoView: true);
@@ -818,8 +818,10 @@ internal
                 {
                     columnIndex = CurrentColumnIndex;
                     action = (shift && SelectionMode == DataGridSelectionMode.Extended)
-                        ? action = DataGridSelectionAction.SelectFromAnchorToCurrent
-                        : action = DataGridSelectionAction.SelectCurrent;
+                        ? (ctrl
+                            ? DataGridSelectionAction.AddRangeFromAnchorToCurrent
+                            : DataGridSelectionAction.SelectFromAnchorToCurrent)
+                        : DataGridSelectionAction.SelectCurrent;
                 }
 
                 UpdateSelectionAndCurrency(columnIndex, nextPageSlot, action, scrollIntoView: true);
@@ -875,7 +877,9 @@ internal
                 {
                     columnIndex = CurrentColumnIndex;
                     action = (shift && SelectionMode == DataGridSelectionMode.Extended)
-                        ? DataGridSelectionAction.SelectFromAnchorToCurrent
+                        ? (ctrl
+                            ? DataGridSelectionAction.AddRangeFromAnchorToCurrent
+                            : DataGridSelectionAction.SelectFromAnchorToCurrent)
                         : DataGridSelectionAction.SelectCurrent;
                 }
 
@@ -1208,8 +1212,12 @@ internal
                 DataGridSelectionAction action;
                 if (SelectionMode == DataGridSelectionMode.Extended && shift)
                 {
-                    // Shift select multiple rows
-                    action = DataGridSelectionAction.SelectFromAnchorToCurrent;
+                    // Shift select multiple rows. Without Ctrl the range is the whole selection, so a
+                    // shift-click landing inside the previous range revises it down rather than being
+                    // a no-op because every row it covers is already selected.
+                    action = ctrl
+                        ? DataGridSelectionAction.AddRangeFromAnchorToCurrent
+                        : DataGridSelectionAction.SelectFromAnchorToCurrent;
                 }
                 else if (GetRowSelection(slot))  // Unselecting single row or Selecting a previously multi-selected row
                 {
@@ -1278,6 +1286,8 @@ internal
             {
                 return true;
             }
+
+            using var columnsDelta = BeginSelectedColumnsDelta();
 
             try
             {

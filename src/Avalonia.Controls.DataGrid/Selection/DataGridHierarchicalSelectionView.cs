@@ -17,7 +17,7 @@ namespace Avalonia.Controls.DataGridSelection
     /// expanding or collapsing a branch - which reorders and resizes the flattened list - needs no
     /// handling at all, because nothing indexes into it.
     /// </remarks>
-    internal sealed class DataGridHierarchicalSelectionView : IDataGridSelectionView, IDisposable
+    internal sealed class DataGridHierarchicalSelectionView : IDataGridSelectionView, IDataGridSelectionSourceMembership, IDisposable
     {
         private readonly IHierarchicalModel _model;
         private readonly Action? _onOrderChanged;
@@ -62,6 +62,30 @@ namespace Avalonia.Controls.DataGridSelection
             // Projected first, so that a caller who selected a node directly still gets an answer.
             var projected = Project(item);
             return projected is null ? -1 : _model.IndexOf(projected);
+        }
+
+        /// <summary>
+        /// Membership test for the whole hierarchy rather than for the rows it currently shows.
+        /// </summary>
+        /// <remarks>
+        /// <see cref="IndexOf"/> cannot stand in for this. It reports a position in the flattened
+        /// list, so everything a collapsed parent hides reads as absent - and a reset that decided
+        /// what to deselect from that would drop the selection of any row the user had collapsed out
+        /// of sight, which collapsing itself deliberately leaves alone.
+        /// </remarks>
+        public Func<object?, bool> SnapshotSourceMembership()
+        {
+            if (_model is IHierarchicalItemMembership membership)
+            {
+                var contains = membership.SnapshotItemMembership();
+                return item => contains(Project(item));
+            }
+
+            // A model that cannot enumerate its collapsed branches cannot say an item is gone, and
+            // the visible nodes are no substitute for asking. Keeping everything leaves stale items
+            // in the selection until something reports outright that they were removed; the
+            // alternative silently deselects whatever happens to be collapsed.
+            return static _ => true;
         }
 
         public void Dispose()

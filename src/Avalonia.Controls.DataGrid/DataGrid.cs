@@ -397,7 +397,9 @@ internal
         private readonly List<object> _pendingSelectionRemoved = new();
 
         private bool _columnsChangedWhileDetached;
-        private bool _selectionModeSetWhileDetached;
+        // SelectionMode as it stood when the grid detached, so attaching can tell whether the
+        // consumer moved it in the meantime. See AttachSelectionModelHandlers.
+        private DataGridSelectionMode? _selectionModeAtDetach;
         private bool _suppressSelectionUpdatesFromRows;
         private bool _syncingSelectedItems;
         private bool _syncingSelectedCells;
@@ -1120,9 +1122,51 @@ internal
             _lastPointerPosition = e.GetPosition(this);
         }
 
+        /// <summary>
+        /// The element the pointer is currently over, or null when nothing is.
+        ///
+        /// <remarks>
+        /// Asking the visual root for the input root only works on the older Avalonia this control
+        /// still targets. On the newer one the visual root is the top level's host, the top level
+        /// does not implement <see cref="IInputRoot"/> - it owns one - and that input root is not
+        /// public. Asking it there returns null every single time, which silently turned all three
+        /// callers below into their fallbacks. <see cref="InputElement.IsPointerOver"/> is public on
+        /// both and is what the input system maintains, so the tree can answer instead.
+        /// </remarks>
+        /// </summary>
+        private Visual PointerOverVisual
+        {
+            get
+            {
+                if (VisualRoot is IInputRoot inputRoot)
+                {
+                    return inputRoot.PointerOverElement as Visual;
+                }
+
+                return FindPointerOverLeaf(this);
+            }
+        }
+
+        /// <summary>
+        /// The deepest element under <paramref name="node"/> that the pointer is over. Descends only
+        /// through elements already flagged, so it costs the depth of the tree rather than its size.
+        /// </summary>
+        private static Visual FindPointerOverLeaf(Visual node)
+        {
+            foreach (var child in node.GetVisualChildren())
+            {
+                if (child is InputElement { IsPointerOver: true })
+                {
+                    return FindPointerOverLeaf(child) ?? child;
+                }
+            }
+
+            return null;
+        }
+
         private void DataGrid_PointerExited(object? sender, PointerEventArgs e)
         {
-            if (VisualRoot is IInputRoot inputRoot && inputRoot.PointerOverElement is Visual visual)
+            if (PointerOverVisual is { } visual)
             {
                 for (var current = visual; current != null; current = current.VisualParent)
                 {
@@ -1325,7 +1369,7 @@ internal
 
         private bool IsPointerOverGroupHeaderOrFooter()
         {
-            if (VisualRoot is not IInputRoot inputRoot || inputRoot.PointerOverElement is not Visual visual)
+            if (PointerOverVisual is not { } visual)
             {
                 return false;
             }
@@ -1406,7 +1450,7 @@ internal
                 return true;
             }
 
-            if (VisualRoot is IInputRoot inputRoot && inputRoot.PointerOverElement is Visual visual)
+            if (PointerOverVisual is { } visual)
             {
                 if (visual.VisualRoot != null)
                 {
@@ -2779,6 +2823,12 @@ internal
 
         private void AttachSelectionModelHandlers()
         {
+            // Compared against the value the mode was left at rather than recording that a write
+            // happened, so that setting it away and back again counts as leaving it alone.
+            var modeChangedWhileDetached =
+                _selectionModeAtDetach.HasValue && _selectionModeAtDetach.Value != SelectionMode;
+            _selectionModeAtDetach = null;
+
             if (_selectionModel == null)
             {
                 return;
@@ -2787,10 +2837,12 @@ internal
             _selectionModel.Owner = this;
 
             // Both sides can have moved while the grid was away, and they mean the same thing, so one
-            // has to give. Whichever the consumer touched more recently is the instruction to keep;
-            // if that was the control's SelectionMode - or neither - the model follows it, which is
+            // has to give. The control's SelectionMode is the instruction to keep whenever the
+            // consumer moved it while detached - not because it was written last, which neither side
+            // records, but because a mode the consumer set on the control is the more explicit of the
+            // two. Only when the mode stands where it was left does the model get to speak, which is
             // also the right answer on a first attach where nothing has been detached at all.
-            if (_selectionModeSetWhileDetached || _selectionModel.SingleSelect == (SelectionMode == DataGridSelectionMode.Single))
+            if (modeChangedWhileDetached || _selectionModel.SingleSelect == (SelectionMode == DataGridSelectionMode.Single))
             {
                 _selectionModel.SingleSelect = SelectionMode == DataGridSelectionMode.Single;
             }
@@ -2801,7 +2853,6 @@ internal
                     _selectionModel.SingleSelect ? DataGridSelectionMode.Single : DataGridSelectionMode.Extended);
             }
 
-            _selectionModeSetWhileDetached = false;
             _selectedItemsView ??= new DataGridSelectedItemsView(_selectionModel);
             UpdateSelectionModelSource();
             CoerceSelectedItem();
@@ -2836,6 +2887,30 @@ internal
                     collectionView,
                     _selectionModel.Comparer,
                     _selectionModel.InvalidateOrder);
+            }
+            else if (DataConnection?.CollectionView is { } unsupported)
+            {
+                // Selection is stored by item, but resolving an item to a position - which is what
+                // SelectedItem and SelectedIndex are applied through - needs an ordered view, and
+                // there is nothing on IDataGridCollectionView to build one from: it has no Count, no
+                // indexer and no IndexOf. Those live on DataGridCollectionView alone.
+                //
+                // Carrying on without one is worse than refusing. Every position resolves to -1,
+                // which reads as "this item is not in the view", so assigning SelectedItem clears
+                // the selection instead of setting it and the property is left reporting a value
+                // nothing backs. A binding does nothing, and says nothing about why.
+                throw new NotSupportedException(
+                    $"'{unsupported.GetType().FullName}' cannot be used as the DataGrid's ItemsSource. " +
+                    "The grid cannot resolve item positions in a custom IDataGridCollectionView, " +
+                    "which SelectedItem and SelectedIndex depend on. Use a DataGridCollectionView, " +
+                    "or set ItemsSource to the underlying collection and let the grid wrap it.");
+            }
+            else
+            {
+                // No rows yet - ItemsSource has not been assigned, or has been cleared. The model
+                // still gets a view, so that a grid always has one and the order the grid's
+                // properties are written in stops being something the selection can tell apart.
+                _selectionView = EmptyDataGridSelectionView.Instance;
             }
 
             _selectionModel.AttachView(_selectionView);
@@ -3011,7 +3086,7 @@ internal
                     CurrentColumnIndex = -1;
                     CurrentSlot = -1;
                 }
-                ApplyHierarchicalReplacementSelection(replacementSelection);
+                ApplyReplacementSelection(replacementSelection);
                 RefreshSelectionFromModel();
                 RequestHierarchicalIndentationRefresh();
             }
@@ -3110,6 +3185,21 @@ internal
                     return false;
                 }
 
+                if (change.Kind == FlattenedChangeKind.Move)
+                {
+                    // Both ends of the run have to be rows the grid already has, since a move
+                    // creates none. The row count is untouched, so the running total below stands.
+                    if (change.MovedFromIndex < 0 ||
+                        change.MovedFromIndex + change.OldCount > count ||
+                        change.Index + change.NewCount > count)
+                    {
+                        return false;
+                    }
+
+                    hasChanges = true;
+                    continue;
+                }
+
                 if (change.OldCount > count - change.Index)
                 {
                     return false;
@@ -3155,6 +3245,16 @@ internal
 
             foreach (var change in changes)
             {
+                if (change.Kind == FlattenedChangeKind.Move)
+                {
+                    // The rows keep their containers and are repositioned, the same way a move
+                    // arriving from a flat collection is handled. Removing and reinserting them
+                    // would end in the same arrangement while reporting rows that never left as
+                    // having gone.
+                    MoveRows(change.MovedFromIndex, change.Index, change.OldCount);
+                    continue;
+                }
+
                 if (TryApplyHierarchicalReplace(change))
                 {
                     continue;
@@ -3232,7 +3332,11 @@ internal
         /// Moves the selection from the items a replacement took away onto the items it put in their
         /// place, so that replacing the item under a selected row leaves that row selected.
         /// </summary>
-        private void ApplyHierarchicalReplacementSelection(
+        /// <remarks>
+        /// Shared by the flattened path and the flat one - the two work out the pairing differently,
+        /// but a replaced row keeps its selection either way.
+        /// </remarks>
+        private void ApplyReplacementSelection(
             List<(object Replaced, object Replacement)>? transfers)
         {
             if (transfers == null || _selectionModel == null)
@@ -3787,7 +3891,13 @@ internal
 
             foreach (var change in changes)
             {
-                if (change.Index <= anchorRowIndex)
+                // A move disturbs everything from the near end of its travel onwards, which may be
+                // where it came from rather than where it went.
+                var firstAffected = change.Kind == FlattenedChangeKind.Move
+                    ? Math.Min(change.MovedFromIndex, change.Index)
+                    : change.Index;
+
+                if (firstAffected <= anchorRowIndex)
                 {
                     return true;
                 }
@@ -3807,6 +3917,14 @@ internal
             {
                 foreach (var change in changes)
                 {
+                    if (change.Kind == FlattenedChangeKind.Move)
+                    {
+                        // This runs to find somewhere to put an index that was removed. A move
+                        // removes nothing, so it never strands one - it just relocates it.
+                        oldRowIndex = change.MapMovedIndex(oldRowIndex);
+                        continue;
+                    }
+
                     if (oldRowIndex < change.Index)
                     {
                         break;
@@ -3834,6 +3952,21 @@ internal
             {
                 if (change.OldCount == 0 && change.NewCount == 0)
                 {
+                    continue;
+                }
+
+                if (change.Kind == FlattenedChangeKind.Move)
+                {
+                    // Measured heights belong to the rows, so they travel with them. Reporting the
+                    // move as a removal and an insertion would throw away what had been measured
+                    // and re-estimate the same rows from scratch.
+                    var fromSlot = SlotFromRowIndex(change.MovedFromIndex);
+                    var toSlot = SlotFromRowIndex(change.Index);
+                    if (fromSlot >= 0 && toSlot >= 0)
+                    {
+                        RowHeightEstimator.OnItemsMoved(fromSlot, toSlot, change.OldCount);
+                    }
+
                     continue;
                 }
 
@@ -3920,51 +4053,20 @@ internal
         }
 
 
+        /// <summary>
+        /// Unwraps a node to the item it carries, so the grid names selection by the caller's items.
+        /// </summary>
+        /// <remarks>
+        /// Defers to the selection view's projection rather than repeating it: the two have to agree
+        /// about what a selected item is, since one decides what goes into the selection and the other
+        /// resolves it back to a row.
+        /// </remarks>
         private object? ProjectHierarchicalSelectionItem(object? item)
-        {
-            if (item is Avalonia.Controls.DataGridHierarchical.HierarchicalNode node)
-            {
-                return node.Item;
-            }
-
-            return item is Avalonia.Controls.DataGridHierarchical.IHierarchicalNodeItem nodeItem
-                ? nodeItem.Item
-                : item;
-        }
+            => DataGridHierarchicalSelectionView.Project(item);
 
         private object? ProjectSelectionItem(object? item)
         {
             return _hierarchicalRowsEnabled ? ProjectHierarchicalSelectionItem(item) : item;
-        }
-
-        private int ResolveHierarchicalIndex(object? item)
-        {
-            if (item == null || _hierarchicalModel == null)
-            {
-                return -1;
-            }
-
-            if (item is Avalonia.Controls.DataGridHierarchical.HierarchicalNode node)
-            {
-                return _hierarchicalModel.IndexOf(node);
-            }
-
-            if (item is Avalonia.Controls.DataGridHierarchical.IHierarchicalNodeItem nodeItem)
-            {
-                return _hierarchicalModel.IndexOf(nodeItem.Item);
-            }
-
-            return _hierarchicalModel.IndexOf(item);
-        }
-
-        private int ResolveSelectionIndex(object? item)
-        {
-            if (item == null)
-            {
-                return -1;
-            }
-
-            return GetSelectionModelIndexOfItem(item);
         }
 
         private void UpdateSortingAdapterView()
@@ -4062,9 +4164,9 @@ internal
                 {
                     // Columns are already current (AreMaterializedColumnDefinitionsCurrent returned true).
                     // Definitions don't change while detached, so there is nothing to refresh.
-                    // RefreshMaterializedColumnDefinitions would overwrite user-resized widths with
-                    // definition defaults, and ApplyDefinitionDisplayIndexes would overwrite user-reordered
-                    // positions with definition collection order — both wrong on re-attach.
+                    // Re-applying them would overwrite user-resized widths with definition defaults,
+                    // and ApplyDefinitionDisplayIndexes would overwrite user-reordered positions with
+                    // definition collection order — both wrong on re-attach.
                 }
             }
 
@@ -4102,6 +4204,7 @@ internal
             }
 
             _externalSubscriptionsDetached = true;
+            _selectionModeAtDetach = SelectionMode;
 
             if (_boundColumns != null)
             {
@@ -4241,56 +4344,6 @@ internal
             }
 
             return actualSet.Count == 0;
-        }
-
-        private void RefreshMaterializedColumnDefinitions()
-        {
-            if (_columnDefinitionsSource == null)
-            {
-                return;
-            }
-
-            var context = new DataGridColumnDefinitionContext(this);
-            foreach (var definition in _columnDefinitionsSource)
-            {
-                if (definition == null)
-                {
-                    throw new ArgumentNullException(nameof(definition));
-                }
-
-                if (_columnDefinitionMap.TryGetValue(definition, out var column) && column != null)
-                {
-                    definition.ApplyToColumn(column, context);
-                }
-            }
-        }
-
-        private void DetachBoundColumnsFromGrid()
-        {
-            if (_boundColumns == null || ColumnsInternal.Count == 0)
-            {
-                return;
-            }
-
-            var boundColumns = new HashSet<DataGridColumn>(_boundColumns);
-            if (boundColumns.Count == 0)
-            {
-                return;
-            }
-
-            for (int i = ColumnsInternal.Count - 1; i >= 0; i--)
-            {
-                var column = ColumnsInternal[i];
-                if (column is DataGridFillerColumn)
-                {
-                    continue;
-                }
-
-                if (boundColumns.Contains(column))
-                {
-                    ColumnsInternal.RemoveAt(i);
-                }
-            }
         }
 
 

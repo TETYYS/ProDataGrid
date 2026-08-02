@@ -732,6 +732,13 @@ namespace Avalonia.Controls
                 return fastIndex;
             }
 
+            // No O(1) lookup exists for this source. A collection view can walk itself in view order, which
+            // is cheaper overall than mirroring it into a lookup that every mutation invalidates.
+            if (list is DataGridCollectionView collectionView)
+            {
+                return collectionView.GetReferenceIndexOf(dataItem);
+            }
+
             var cachedIndex = FindReferenceIndexWithCache(list, dataItem);
             if (cachedIndex >= 0)
             {
@@ -741,6 +748,11 @@ namespace Avalonia.Controls
             return FindReferenceIndexLinear(list, dataItem);
         }
 
+        /// <summary>
+        /// Resolves the index of <paramref name="dataItem"/> in <paramref name="list"/> without scanning it.
+        /// Returns <c>false</c> when no such lookup is available - it never falls back to a slower strategy,
+        /// so callers can tell whether resolving this item is cheap.
+        /// </summary>
         private bool TryGetFastReferenceIndex(IList list, object dataItem, out int index)
         {
             if (TryResolveFastReferenceIndex(list as IDataGridIndexOf, list, dataItem, out index))
@@ -1266,7 +1278,27 @@ namespace Avalonia.Controls
                         }
                         break;
                     case NotifyCollectionChangedAction.Replace:
-                        throw new NotSupportedException(); // 
+                        // A replacement is not a removal followed by an insertion. The rows keep
+                        // their containers and are pointed at whatever now occupies their position,
+                        // and the selection goes with them - a replaced row stays selected, only a
+                        // removed one loses it. This used to throw, which left `list[i] = x` - the
+                        // ordinary way to replace an item - unusable, and pushed consumers into the
+                        // remove-then-add that costs them exactly that selection.
+                        if (!IsGrouping && e.OldItems != null && e.NewItems != null && e.NewStartingIndex >= 0)
+                        {
+                            _owner.ReplaceRows(e.NewStartingIndex, e.OldItems, e.NewItems);
+                        }
+                        else
+                        {
+                            // Grouping puts the two items in buckets this cannot reason about, and
+                            // without usable indexes there is nothing to point the existing rows at,
+                            // so the only answer left is to rebuild. DataGridCollectionView reaches
+                            // neither case - it splits a grouped Replace into a Remove and an Add,
+                            // and always reports a pairing otherwise - so this stands as the honest
+                            // answer to a notification that cannot be applied, not as a live path.
+                            _owner.InitializeElements(recycleRows: true);
+                        }
+                        break;
 
                     case NotifyCollectionChangedAction.Reset:
                         // Did the data type change during the reset?  If not, we can recycle

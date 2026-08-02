@@ -8,6 +8,7 @@ using Avalonia.Controls;
 using Avalonia.Data.Core;
 using Avalonia.Data.Core.Plugins;
 using Avalonia.Input;
+using Avalonia.VisualTree;
 
 namespace Avalonia.Controls.DataGridTests
 {
@@ -135,7 +136,56 @@ namespace Avalonia.Input
             SetPointerOverElementForTestsCore(inputRoot, element);
         }
 
+        /// <summary>
+        /// The chain currently flagged as pointer-over, so the next call can clear it again the way
+        /// the input system would.
+        /// </summary>
+        private static readonly List<InputElement> _flagged = new();
+
         internal static void SetPointerOverElementForTestsCore(object inputRoot, IInputElement? element)
+        {
+            SetPointerOverChain(element);
+            SetPointerOverElementOnInputRoot(inputRoot, element);
+        }
+
+        /// <summary>
+        /// Marks <paramref name="element"/> and its visual ancestors as pointer-over, and unmarks
+        /// whatever the previous call marked.
+        ///
+        /// <remarks>
+        /// Writing <c>PointerOverElement</c> on the input root is not enough on its own. On the
+        /// newer Avalonia the input root is private to the top level, so control code cannot read it
+        /// and goes by <see cref="InputElement.IsPointerOver"/> instead - which stays false unless
+        /// something sets it. Its setter is non-public, hence the reflection.
+        /// </remarks>
+        /// </summary>
+        private static void SetPointerOverChain(IInputElement? element)
+        {
+            var setter = typeof(InputElement)
+                .GetProperty(nameof(InputElement.IsPointerOver), BindingFlags.Instance | BindingFlags.Public)
+                ?.SetMethod
+                ?? throw new InvalidOperationException("InputElement.IsPointerOver has no setter.");
+
+            foreach (var stale in _flagged)
+            {
+                setter.Invoke(stale, new object[] { false });
+            }
+
+            _flagged.Clear();
+
+            for (var current = element as Visual; current != null; current = current.GetVisualParent())
+            {
+                if (current is not InputElement input)
+                {
+                    continue;
+                }
+
+                setter.Invoke(input, new object[] { true });
+                _flagged.Add(input);
+            }
+        }
+
+        private static void SetPointerOverElementOnInputRoot(object inputRoot, IInputElement? element)
         {
             if (inputRoot is IInputRoot directInputRoot)
             {
@@ -166,7 +216,7 @@ namespace Avalonia.Input
             var nestedInputRoot = inputRootProperty.GetValue(inputRoot)
                 ?? throw new InvalidOperationException("InputRoot property was null.");
 
-            SetPointerOverElementForTestsCore(nestedInputRoot, element);
+            SetPointerOverElementOnInputRoot(nestedInputRoot, element);
         }
     }
 }

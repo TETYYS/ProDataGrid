@@ -19,12 +19,8 @@ internal
     {
         private bool ApplyCellSelectionRange(DataGridCellRange range, bool append, DataGridSelectionChangeSource source, RoutedEventArgs triggerEventArgs)
         {
-            if (DataConnection == null)
-            {
-                return false;
-            }
-
             using var _ = BeginSelectionChangeScope(source, triggerEventArgs);
+            using var columnsDelta = BeginSelectedColumnsDelta();
             var added = new List<DataGridCellInfo>();
             var removed = new List<DataGridCellInfo>();
 
@@ -62,12 +58,8 @@ internal
 
         private bool ApplyColumnHeaderSelectionRange(int startDisplayIndex, int endDisplayIndex, bool append, DataGridSelectionChangeSource source, RoutedEventArgs triggerEventArgs)
         {
-            if (DataConnection == null || ColumnsInternal == null)
-            {
-                return false;
-            }
-
             using var _ = BeginSelectionChangeScope(source, triggerEventArgs);
+            using var columnsDelta = BeginSelectedColumnsDelta();
             var added = new List<DataGridCellInfo>();
             var removed = new List<DataGridCellInfo>();
 

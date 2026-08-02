@@ -95,7 +95,7 @@ namespace Avalonia.Controls
                         desiredSlot = lastSlot;
                         columnIndex = CurrentColumnIndex;
                         action = (SelectionMode == DataGridSelectionMode.Extended)
-                        ? DataGridSelectionAction.SelectFromAnchorToCurrent
+                        ? DataGridSelectionAction.AddRangeFromAnchorToCurrent
                         : DataGridSelectionAction.SelectCurrent;
                     }
                     else

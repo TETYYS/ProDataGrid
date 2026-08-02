@@ -1323,18 +1323,31 @@ internal
             }
         }
 
+        /// <summary>
+        /// Resolves the view index of <paramref name="item"/> only when the source collection exposes a
+        /// lookup of its own. The view has no reference-to-index map, so there is nothing cheap to offer
+        /// otherwise; callers that need an answer at any cost use <see cref="GetReferenceIndexOf"/>.
+        /// </summary>
         bool Avalonia.Controls.IDataGridIndexOf.TryGetReferenceIndex(object item, out int index)
         {
             EnsureCollectionInSync();
             VerifyRefreshNotDeferred();
 
-            if (TryGetSourceReferenceIndex(item, out index))
-            {
-                return true;
-            }
+            return TryGetSourceReferenceIndex(item, out index);
+        }
 
-            index = ReferenceIndexOf(item);
-            return index >= 0;
+        /// <summary>
+        /// Returns the index of the item in the view using reference semantics, or -1 if not found.
+        /// Falls back to scanning the view when the source cannot resolve the index on its own.
+        /// </summary>
+        internal int GetReferenceIndexOf(object item)
+        {
+            EnsureCollectionInSync();
+            VerifyRefreshNotDeferred();
+
+            return TryGetSourceReferenceIndex(item, out var index)
+                ? index
+                : ReferenceIndexOf(item);
         }
 
         private bool TryGetSourceReferenceIndex(object item, out int index)
