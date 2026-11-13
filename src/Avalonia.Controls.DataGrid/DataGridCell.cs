@@ -23,7 +23,7 @@ namespace Avalonia.Controls
     /// Represents an individual <see cref="T:Avalonia.Controls.DataGrid" /> cell.
     /// </summary>
     [TemplatePart(DATAGRIDCELL_elementRightGridLine, typeof(Rectangle))]
-    [PseudoClasses(":selected", ":row-selected", ":cell-selected", ":current", ":edited", ":invalid", ":warning", ":info", ":focus", ":searchmatch", ":searchcurrent")]
+    [PseudoClasses(":selected", ":row-selected", ":cell-selected", ":current", ":edited", ":invalid", ":warning", ":info", ":focus", ":searchmatch", ":searchcurrent", ":cell-selection-unit")]
 #if !DATAGRID_INTERNAL
 public
 #else
@@ -56,7 +56,8 @@ internal
             Info = 1 << 7,
             Focus = 1 << 8,
             SearchMatch = 1 << 9,
-            SearchCurrent = 1 << 10
+            SearchCurrent = 1 << 10,
+            CellSelectionUnit = 1 << 11
         }
 
         public static readonly DirectProperty<DataGridCell, bool> IsValidProperty =
@@ -345,7 +346,10 @@ internal
             }
 
             bool rowSelected = owningRow.IsSelected;
-            bool cellSelected = owningGrid.SelectionUnit != DataGridSelectionUnit.FullRow
+            // Cells select themselves, rather than with their row. Set on the cell, so the cell theme styles it without
+            // a descendant selector, which every cell would evaluate against its grid
+            bool cellSelectionUnit = owningGrid.SelectionUnit != DataGridSelectionUnit.FullRow;
+            bool cellSelected = cellSelectionUnit
                 && owningGrid.GetCellSelectionFromSlot(owningRow.Slot, ColumnIndex);
             bool isSelected = owningGrid.SelectionUnit == DataGridSelectionUnit.FullRow
                 ? rowSelected
@@ -372,7 +376,8 @@ internal
                 isInfo,
                 isFocus,
                 isSearchMatch,
-                isSearchCurrent);
+                isSearchCurrent,
+                cellSelectionUnit);
 
             if (_hasPseudoClassFlags && _pseudoClassFlags == nextFlags)
             {
@@ -390,6 +395,7 @@ internal
             SetPseudoClassFlag(":focus", nextFlags, CellPseudoClassFlags.Focus);
             SetPseudoClassFlag(":searchmatch", nextFlags, CellPseudoClassFlags.SearchMatch);
             SetPseudoClassFlag(":searchcurrent", nextFlags, CellPseudoClassFlags.SearchCurrent);
+            SetPseudoClassFlag(":cell-selection-unit", nextFlags, CellPseudoClassFlags.CellSelectionUnit);
 
             _pseudoClassFlags = nextFlags;
             _hasPseudoClassFlags = true;
@@ -420,7 +426,8 @@ internal
             bool isInfo,
             bool isFocus,
             bool isSearchMatch,
-            bool isSearchCurrent)
+            bool isSearchCurrent,
+            bool cellSelectionUnit)
         {
             var flags = CellPseudoClassFlags.None;
             if (isSelected)
@@ -476,6 +483,11 @@ internal
             if (isSearchCurrent)
             {
                 flags |= CellPseudoClassFlags.SearchCurrent;
+            }
+
+            if (cellSelectionUnit)
+            {
+                flags |= CellPseudoClassFlags.CellSelectionUnit;
             }
 
             return flags;
