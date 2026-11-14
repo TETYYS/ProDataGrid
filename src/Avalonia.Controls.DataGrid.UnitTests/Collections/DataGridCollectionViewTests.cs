@@ -15,6 +15,52 @@ namespace Avalonia.Controls.DataGridTests.Collections;
 public class DataGridCollectionViewTests
 {
     [Fact]
+    public void TryGetUniqueReferenceIndex_Finds_Item_In_View_Order()
+    {
+        var a = new object();
+        var b = new object();
+        var c = new object();
+        var view = new DataGridCollectionView(new List<object> { a, b, c })
+        {
+            Filter = item => !ReferenceEquals(item, a)
+        };
+
+        Assert.True(view.TryGetUniqueReferenceIndex(c, out var index));
+        Assert.Equal(1, index);
+
+        Assert.True(view.TryGetUniqueReferenceIndex(a, out index));
+        Assert.Equal(-1, index);
+    }
+
+    [Fact]
+    public void TryGetUniqueReferenceIndex_Rejects_Item_Present_Twice()
+    {
+        var a = new object();
+        var view = new DataGridCollectionView(new List<object> { a, new object(), a });
+
+        Assert.False(view.TryGetUniqueReferenceIndex(a, out _));
+    }
+
+    [Fact]
+    public void TryGetUniqueReferenceIndex_Uses_Grouped_Order()
+    {
+        var items = new List<GroupedItem>
+        {
+            new("x", "B"),
+            new("y", "A"),
+            new("z", "B")
+        };
+        var view = new DataGridCollectionView(items);
+        view.GroupDescriptions.Add(new DataGridPathGroupDescription(nameof(GroupedItem.Group)));
+
+        Assert.True(view.TryGetUniqueReferenceIndex(items[2], out var index));
+        Assert.Equal(view.IndexOf(items[2]), index);
+        Assert.Same(items[2], view.GetItemAt(index));
+    }
+
+    private sealed record GroupedItem(string Name, string Group);
+
+    [Fact]
     public void Move_Reorders_View_And_Raises_Remove_Then_Add()
     {
         var items = new ObservableCollection<int> { 1, 2, 3, 4 };

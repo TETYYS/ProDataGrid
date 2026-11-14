@@ -216,6 +216,11 @@ namespace Avalonia.Controls.DataGridSearching
             }
 
             var view = View;
+            if (view is DataGridCollectionView collectionView)
+            {
+                return collectionView.TryGetUniqueReferenceIndex(item, out rowIndex);
+            }
+
             if (view is IList list)
             {
                 for (int i = 0; i < list.Count; i++)

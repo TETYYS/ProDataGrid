@@ -557,6 +557,18 @@ internal
                 EnsureCollectionInSync();
                 VerifyRefreshNotDeferred();
 
+                return CountUnchecked;
+            }
+        }
+
+        /// <summary>
+        /// <see cref="Count"/> without bringing the view in sync first. Only for callers that already did,
+        /// and read the view many times in a row without anything changing it in between.
+        /// </summary>
+        private int CountUnchecked
+        {
+            get
+            {
                 // if we have paging
                 if (PageSize > 0 && PageIndex > -1)
                 {

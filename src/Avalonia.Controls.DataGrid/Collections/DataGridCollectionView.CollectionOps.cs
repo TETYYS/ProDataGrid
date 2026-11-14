@@ -240,23 +240,69 @@ namespace Avalonia.Collections
             EnsureCollectionInSync();
             VerifyRefreshNotDeferred();
 
+            var count = CountUnchecked;
+
             // for indices larger than the count
-            if (index >= Count || index < 0)
+            if (index >= count || index < 0)
             {
                 throw new ArgumentOutOfRangeException(nameof(index));
             }
 
+            return ItemAtUnchecked(index, count);
+        }
+
+        /// <summary>
+        /// <see cref="GetItemAt"/> for an index already known to be within <paramref name="count"/>, the
+        /// view's <see cref="CountUnchecked"/>, without bringing the view in sync first.
+        /// </summary>
+        private object ItemAtUnchecked(int index, int count)
+        {
             if (IsGrouping)
             {
                 return RootGroup?.LeafAt(_isUsingTemporaryGroup ? ConvertToInternalIndex(index) : index);
             }
 
-            if (IsAddingNew && UsesLocalArray && index == Count - 1)
+            if (IsAddingNew && UsesLocalArray && index == count - 1)
             {
                 return CurrentAddItem;
             }
 
             return InternalItemAt(ConvertToInternalIndex(index));
+        }
+
+        /// <summary>
+        /// Finds the one index at which <paramref name="item"/> itself (by reference) appears in the view.
+        /// </summary>
+        /// <param name="item">The item to look for.</param>
+        /// <param name="index">The index, or -1 when the item does not appear.</param>
+        /// <returns>False when the item appears more than once.</returns>
+        /// <remarks>
+        /// One pass over the view that brings it in sync once, rather than once for every
+        /// <see cref="Count"/> and <see cref="GetItemAt"/> a loop over the view would otherwise make.
+        /// </remarks>
+        internal bool TryGetUniqueReferenceIndex(object item, out int index)
+        {
+            EnsureCollectionInSync();
+            VerifyRefreshNotDeferred();
+
+            index = -1;
+            var count = CountUnchecked;
+            for (int i = 0; i < count; i++)
+            {
+                if (!ReferenceEquals(ItemAtUnchecked(i, count), item))
+                {
+                    continue;
+                }
+
+                if (index >= 0)
+                {
+                    return false;
+                }
+
+                index = i;
+            }
+
+            return true;
         }
 
         /// <summary>
