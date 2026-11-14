@@ -298,7 +298,25 @@ internal
                 // Update the estimator with current display state
                 // Pass the collapsed slot count and details count so estimators can accurately calculate
                 int collapsedSlotCount = _collapsedSlotsTable.GetIndexCount(0, DisplayData.LastScrollingSlot);
-                int detailsCount = GetDetailsCountInclusive(0, DisplayData.LastScrollingSlot);
+
+                // Read the details estimate before counting details rather than at its first use below.
+                // Every consumer of the count multiplies it by this estimate, so when it is zero - no
+                // details template, or an estimator that says details add no height - counting costs a
+                // walk of the rows to produce a term worth nothing. Counting is skipped outright then.
+                // The estimate is learned from measured rows above, not from the count passed below.
+                double rowDetailsEstimate = estimator?.RowDetailsHeightEstimate ?? RowDetailsHeightEstimate;
+                bool detailsAffectHeight = rowDetailsEstimate > 0;
+
+                int detailsCount = detailsAffectHeight ? GetDetailsCountInclusive(0, DisplayData.LastScrollingSlot) : 0;
+
+                // The details past the viewport, counted once here rather than at each use. Both the
+                // estimator's total and the non-estimator branch below want [0, SlotCount - 1], which is
+                // this plus the count above - counting each range once costs one pass over the rows
+                // instead of the two that re-deriving the whole range from scratch would take.
+                int trailingDetailsCount = detailsAffectHeight
+                    ? GetDetailsCountInclusive(DisplayData.LastScrollingSlot + 1, SlotCount - 1)
+                    : 0;
+
                 if (estimator != null)
                 {
                     estimator.UpdateFromDisplayedRows(
@@ -331,9 +349,6 @@ internal
                 // Height of all rows above the viewport
                 double totalRowsHeight = realizedHeight;
 
-                // Get the effective row details estimate
-                double rowDetailsEstimate = estimator?.RowDetailsHeightEstimate ?? RowDetailsHeightEstimate;
-
                 // Subtract details that were accounted for from the totalRowsHeight
                 totalRowsHeight -= detailsCount * rowDetailsEstimate;
 
@@ -351,7 +366,7 @@ internal
                 if (estimator != null)
                 {
                     var totalCollapsed = _collapsedSlotsTable.GetIndexCount(0, SlotCount - 1);
-                    var totalDetails = GetDetailsCountInclusive(0, SlotCount - 1);
+                    var totalDetails = detailsCount + trailingDetailsCount;
                     var rowGroupHeaderCounts = GetVisibleRowGroupHeaderCounts();
                     double estimatedTotalHeight = estimator.CalculateTotalHeight(SlotCount, totalCollapsed, rowGroupHeaderCounts, totalDetails);
 
@@ -403,7 +418,7 @@ internal
                     totalRowsHeight += RowHeightEstimate * remainingRowCount;
 
                     // Add the rest of the details beyond the viewport
-                    detailsCount += GetDetailsCountInclusive(DisplayData.LastScrollingSlot + 1, SlotCount - 1);
+                    detailsCount += trailingDetailsCount;
                     totalRowsHeight += detailsCount * rowDetailsEstimate;
                 }
                 else
