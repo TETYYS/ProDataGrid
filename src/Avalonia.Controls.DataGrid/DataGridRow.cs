@@ -411,7 +411,10 @@ internal
             }
         }
 
-        internal DataGridCellCollection Cells
+        /// <summary>
+        /// Gets the cells of this row, in column order.
+        /// </summary>
+        public DataGridCellCollection Cells
         {
             get;
             private set;

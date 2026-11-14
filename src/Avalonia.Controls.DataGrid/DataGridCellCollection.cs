@@ -4,13 +4,20 @@
 // All other rights reserved.
 
 using System;
-using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics;
 
 namespace Avalonia.Controls
 {
-    internal class DataGridCellCollection
+    /// <summary>
+    /// The cells of a <see cref="DataGridRow"/>, in column order.
+    /// </summary>
+#if !DATAGRID_INTERNAL
+    public
+#else
+    internal
+#endif
+    sealed class DataGridCellCollection
     {
         private List<DataGridCell> _cells;
         private DataGridRow _owningRow;
@@ -18,12 +25,15 @@ namespace Avalonia.Controls
         internal event EventHandler<DataGridCellEventArgs>? CellAdded;
         internal event EventHandler<DataGridCellEventArgs>? CellRemoved;
 
-        public DataGridCellCollection(DataGridRow owningRow)
+        internal DataGridCellCollection(DataGridRow owningRow)
         {
             _owningRow = owningRow;
             _cells = new List<DataGridCell>();
         }
 
+        /// <summary>
+        /// Gets the number of cells in the row.
+        /// </summary>
         public int Count
         {
             get
@@ -32,12 +42,15 @@ namespace Avalonia.Controls
             }
         }
 
-        public IEnumerator GetEnumerator()
+        /// <summary>
+        /// Returns an enumerator over the cells. A struct enumerator, so <c>foreach</c> does not allocate.
+        /// </summary>
+        public List<DataGridCell>.Enumerator GetEnumerator()
         {
             return _cells.GetEnumerator();
         }
 
-        public void Insert(int cellIndex, DataGridCell cell)
+        internal void Insert(int cellIndex, DataGridCell cell)
         {
             Debug.Assert(cellIndex >= 0 && cellIndex <= _cells.Count);
 
@@ -47,7 +60,7 @@ namespace Avalonia.Controls
             CellAdded?.Invoke(this, new DataGridCellEventArgs(cell));
         }
 
-        public void RemoveAt(int cellIndex)
+        internal void RemoveAt(int cellIndex)
         {
             DataGridCell dataGridCell = _cells[cellIndex];
             _cells.RemoveAt(cellIndex);
@@ -55,6 +68,9 @@ namespace Avalonia.Controls
             CellRemoved?.Invoke(this, new DataGridCellEventArgs(dataGridCell));
         }
 
+        /// <summary>
+        /// Gets the cell at <paramref name="index"/>.
+        /// </summary>
         public DataGridCell this[int index]
         {
             get
