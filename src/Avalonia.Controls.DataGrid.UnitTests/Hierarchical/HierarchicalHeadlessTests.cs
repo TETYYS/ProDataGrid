@@ -2302,6 +2302,103 @@ public class HierarchicalHeadlessTests
         return grid;
     }
 
+    [AvaloniaFact]
+    public void ClearAll_Then_Setting_New_Root_Repopulates_Grid()
+    {
+        var roots = new ObservableCollection<Item>();
+        for (int i = 0; i < 40; i++)
+        {
+            roots.Add(CreateTree($"Root {i + 1}", childCount: 3, grandchildCount: 0));
+        }
+        using var themeScope = UseApplicationTheme(DataGridTheme.SimpleV2);
+
+        var model = new HierarchicalModel(new HierarchicalOptions
+        {
+            ChildrenSelector = o => ((Item)o).Children,
+            AutoExpandRoot = true,
+            VirtualizeChildren = true
+        });
+        model.SetRoots(roots);
+
+        var grid = new DataGrid
+        {
+            HierarchicalModel = model,
+            HierarchicalRowsEnabled = true,
+            AutoGenerateColumns = false,
+            UseLogicalScrollable = true,
+            RowHeight = 24
+        };
+
+        grid.ColumnsInternal.Add(new DataGridHierarchicalColumn
+        {
+            Header = "Name",
+            Binding = new Binding("Item.Name")
+        });
+
+        var window = new Window
+        {
+            Width = 420,
+            Height = 260,
+            Content = grid
+        };
+
+        window.SetThemeStyles(DataGridTheme.SimpleV2);
+        window.Show();
+        PumpLayout(grid);
+
+        var scrollViewer = grid.ScrollViewer;
+        Assert.NotNull(scrollViewer);
+        scrollViewer!.Offset = new Vector(0, 400);
+        PumpLayout(grid);
+        Assert.True(grid.DisplayData.FirstScrollingSlot > 0);
+
+        model.ClearAll();
+        PumpLayout(grid);
+
+        Assert.Equal(0, model.Count);
+        Assert.Empty(model.RootItems.Cast<object>());
+        Assert.Equal(0, grid.SlotCount);
+        Assert.Empty(grid.DisplayData.GetScrollingElements());
+
+        // The clear must not leave stale slot/scroll state behind for the next population.
+        var replacement = CreateTree("Replacement", childCount: 5, grandchildCount: 0);
+        model.SetRoot(replacement);
+        PumpLayout(grid);
+
+        Assert.Equal(6, model.Count);
+        Assert.Equal(model.Count, grid.SlotCount);
+        Assert.NotEmpty(grid.DisplayData.GetScrollingElements());
+        ValidateDisplayedRows(grid, model);
+
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void ClearAll_Stops_Observing_The_Previous_Roots()
+    {
+        var roots = new ObservableCollection<Item>
+        {
+            CreateTree("Root A", childCount: 2, grandchildCount: 0),
+            CreateTree("Root B", childCount: 2, grandchildCount: 0)
+        };
+
+        var model = new HierarchicalModel(new HierarchicalOptions
+        {
+            ChildrenSelector = o => ((Item)o).Children,
+            AutoExpandRoot = true
+        });
+        model.SetRoots(roots);
+        Assert.True(model.Count > 0);
+
+        model.ClearAll();
+        Assert.Equal(0, model.Count);
+        Assert.True(model.IsVirtualRoot);
+
+        roots.Add(CreateTree("Root C", childCount: 0, grandchildCount: 0));
+
+        Assert.Equal(0, model.Count);
+    }
+
     private static void ValidateDisplayedRows(DataGrid grid, HierarchicalModel model)
     {
         var display = grid.DisplayData;
