@@ -1239,9 +1239,49 @@ internal
             _lastPointerPosition = e.GetPosition(this);
         }
 
+        /// <summary>
+        /// The element the pointer is currently over, or null when nothing is.
+        /// </summary>
+        /// <remarks>
+        /// On Avalonia 12 the visual root is the top level's host and the top level does not implement
+        /// <see cref="IInputRoot"/> - it owns one, which is not public - so asking the visual root for
+        /// its input root returns null every time, and the callers below silently took their
+        /// fallbacks. <see cref="InputElement.IsPointerOver"/> is public and is what the input system
+        /// maintains, so the tree can answer instead.
+        /// </remarks>
+        private Visual? PointerOverVisual
+        {
+            get
+            {
+                if (VisualRoot is IInputRoot inputRoot)
+                {
+                    return inputRoot.PointerOverElement as Visual;
+                }
+
+                return FindPointerOverLeaf(this);
+            }
+        }
+
+        /// <summary>
+        /// The deepest element under <paramref name="node"/> that the pointer is over. Descends only
+        /// through elements already flagged, so it costs the depth of the tree rather than its size.
+        /// </summary>
+        private static Visual? FindPointerOverLeaf(Visual node)
+        {
+            foreach (var child in node.GetVisualChildren())
+            {
+                if (child is InputElement { IsPointerOver: true })
+                {
+                    return FindPointerOverLeaf(child) ?? child;
+                }
+            }
+
+            return null;
+        }
+
         private void DataGrid_PointerExited(object? sender, PointerEventArgs e)
         {
-            if (VisualRoot is IInputRoot inputRoot && inputRoot.PointerOverElement is Visual visual)
+            if (PointerOverVisual is { } visual)
             {
                 for (var current = visual; current != null; current = current.VisualParent)
                 {
@@ -1455,7 +1495,7 @@ internal
 
         private bool IsPointerOverGroupHeaderOrFooter()
         {
-            if (VisualRoot is not IInputRoot inputRoot || inputRoot.PointerOverElement is not Visual visual)
+            if (PointerOverVisual is not { } visual)
             {
                 return false;
             }
@@ -1536,7 +1576,7 @@ internal
                 return true;
             }
 
-            if (VisualRoot is IInputRoot inputRoot && inputRoot.PointerOverElement is Visual visual)
+            if (PointerOverVisual is { } visual)
             {
                 if (visual.VisualRoot != null)
                 {
