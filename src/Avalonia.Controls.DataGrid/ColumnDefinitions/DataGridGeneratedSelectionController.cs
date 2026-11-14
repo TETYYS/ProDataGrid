@@ -418,50 +418,44 @@ namespace Avalonia.Controls
             Publish(origin);
         }
 
-        /// <summary>Creates and initializes an identity-preserving Avalonia selection model.</summary>
-        public IdentitySelectionModel CreateIdentitySelectionModel(IEnumerable source)
+        /// <summary>
+        /// Creates a grid selection model that identifies rows by their stable key, initialized with
+        /// the loaded keyed row selection.
+        /// </summary>
+        public DataGridSelectionModel<TItem> CreateSelectionModel()
         {
-            var model = new IdentitySelectionModel(item => _keyAccessor.GetKey((TItem)item));
-            model.SingleSelect = Profile.Mode == DataGridSelectionMode.Single;
-            model.Source = source;
+            var model = new DataGridSelectionModel<TItem>(new ItemKeyComparer(_keyAccessor, _keyComparer))
+            {
+                SingleSelect = Profile.Mode == DataGridSelectionMode.Single
+            };
+
+            // Not on a grid yet, so it has no rows; the grid it is assigned to attaches its own view.
+            model.AttachView(EmptyDataGridSelectionView.Instance);
             ApplyTo(model);
             return model;
         }
 
-        /// <summary>Applies loaded keyed row selection to an Avalonia selection model.</summary>
-        public void ApplyTo(IdentitySelectionModel model)
+        /// <summary>Applies loaded keyed row selection to a grid selection model.</summary>
+        public void ApplyTo(DataGridSelectionModel<TItem> model)
         {
             if (model == null)
             {
                 throw new ArgumentNullException(nameof(model));
             }
-            model.SupersedePendingIdentityRestore();
-            model.BeginBatchUpdate();
-            try
+
+            using (model.BatchUpdate())
             {
                 model.Clear();
-                int sourceIndex = 0;
-                if (model.Source != null)
+                foreach (TItem item in GetSelectedItems())
                 {
-                    foreach (object candidate in model.Source)
-                    {
-                        if (candidate is TItem item && _selectedItemSet.Contains(_keyAccessor.GetKey(item)))
-                        {
-                            model.Select(sourceIndex);
-                        }
-                        sourceIndex++;
-                    }
+                    model.Select(item);
                 }
-            }
-            finally
-            {
-                model.EndBatchUpdate();
             }
         }
 
-        /// <summary>Imports current Avalonia row selection into the keyed controller.</summary>
+        /// <summary>Imports current grid row selection into the keyed controller.</summary>
         public void CaptureFrom(
-            IdentitySelectionModel model,
+            DataGridSelectionModel<TItem> model,
             DataGridGeneratedSelectionOrigin origin = DataGridGeneratedSelectionOrigin.Model)
         {
             if (model == null)
@@ -470,15 +464,12 @@ namespace Avalonia.Controls
             }
             _selectedItemKeys.Clear();
             _selectedItemSet.Clear();
-            foreach (object selected in model.SelectedItems)
+            foreach (TItem item in model.SelectedItems)
             {
-                if (selected is TItem item)
+                TKey key = _keyAccessor.GetKey(item);
+                if (_selectedItemSet.Add(key))
                 {
-                    TKey key = _keyAccessor.GetKey(item);
-                    if (_selectedItemSet.Add(key))
-                    {
-                        _selectedItemKeys.Add(key);
-                    }
+                    _selectedItemKeys.Add(key);
                 }
             }
             Publish(origin);
@@ -512,6 +503,32 @@ namespace Avalonia.Controls
                     target.Add(value);
                 }
             }
+        }
+
+        /// <summary>Two items are the same row when their stable keys are equal.</summary>
+        private sealed class ItemKeyComparer : IEqualityComparer<TItem>
+        {
+            private readonly IDataGridItemKey<TItem, TKey> _keyAccessor;
+            private readonly IEqualityComparer<TKey> _comparer;
+
+            public ItemKeyComparer(IDataGridItemKey<TItem, TKey> keyAccessor, IEqualityComparer<TKey> comparer)
+            {
+                _keyAccessor = keyAccessor;
+                _comparer = comparer;
+            }
+
+            public bool Equals(TItem left, TItem right)
+            {
+                if (left is null || right is null)
+                {
+                    return left is null && right is null;
+                }
+
+                return _comparer.Equals(_keyAccessor.GetKey(left), _keyAccessor.GetKey(right));
+            }
+
+            public int GetHashCode(TItem value) =>
+                value is null ? 0 : _comparer.GetHashCode(_keyAccessor.GetKey(value));
         }
 
         private sealed class CellComparer : IEqualityComparer<DataGridGeneratedCellKey<TKey>>

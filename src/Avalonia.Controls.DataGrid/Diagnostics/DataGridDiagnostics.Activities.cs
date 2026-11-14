@@ -21,7 +21,6 @@ internal static partial class DataGridDiagnostics
     public static Activity? HierarchicalFlattenedChanged() => StartActivity("ProDataGrid.DataGrid.HierarchicalFlattenedChanged");
     public static Activity? HierarchicalIndentationRefresh() => StartActivity("ProDataGrid.DataGrid.HierarchicalIndentationRefresh");
     public static Activity? HierarchicalDisplayedRowsRange() => StartActivity("ProDataGrid.DataGrid.HierarchicalDisplayedRowsRange");
-    public static Activity? HierarchicalSelectionRemap() => StartActivity("ProDataGrid.DataGrid.HierarchicalSelectionRemap");
     public static Activity? UpdateDisplayedRows() => StartActivity("ProDataGrid.DataGrid.UpdateDisplayedRows");
     public static Activity? GenerateRow() => StartActivity("ProDataGrid.DataGrid.GenerateRow");
     public static Activity? AutoGenerateColumns() => StartActivity("ProDataGrid.DataGrid.AutoGenerateColumns");

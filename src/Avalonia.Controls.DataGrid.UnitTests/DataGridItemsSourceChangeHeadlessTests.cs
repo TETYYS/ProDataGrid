@@ -11,6 +11,7 @@ using Avalonia;
 using Avalonia.Collections;
 using Avalonia.Controls;
 using Avalonia.Controls.DataGridHierarchical;
+using Avalonia.Controls.DataGridSelection;
 using Avalonia.Controls.Selection;
 using Avalonia.Data;
 using Avalonia.Headless.XUnit;
@@ -141,6 +142,9 @@ public class DataGridItemsSourceChangeHeadlessTests
         Assert.Equal(-1, grid.EditingColumnIndex);
         Assert.False(grid.CurrentCell.IsValid);
 
+        // Nothing is carried over from the old data.
+        Assert.Empty(grid.Selection.SelectedItems);
+
         ClickCell(GetCell(grid, rowIndex: 0, columnIndex: 0));
         PumpLayout(grid);
 
@@ -179,22 +183,32 @@ public class DataGridItemsSourceChangeHeadlessTests
         var model = CreateHierarchicalModel("A");
         grid.HierarchicalModel = model;
 
-        var selectionModel = new SelectionModel<object> { SingleSelect = false };
+        var selectionModel = new DataGridSelectionModel<object> { SingleSelect = false };
         grid.Selection = selectionModel;
         PumpLayout(grid);
 
-        Assert.Same(grid.CollectionView, selectionModel.Source);
+        SelectionSource.AssertTracksView(grid, selectionModel);
 
-        if (selectionModel.Source is IList list && list.Count > 0)
+        if (selectionModel.View is { Count: > 0 })
         {
-            selectionModel.Select(0);
+            selectionModel.SelectAt(0);
         }
 
         var flatItems = CreateItems("Flat", 2);
         grid.ItemsSource = flatItems;
         PumpLayout(grid);
 
-        Assert.Same(grid.CollectionView, selectionModel.Source);
+        // The hierarchical node that was selected is not in the flat list, so it is dropped rather
+        // than reinterpreted as whatever now sits at index 0. That reinterpretation was what the
+        // index-based model did, and it is the reason a re-sort could hand the selection to the
+        // wrong row.
+        SelectionSource.AssertTracksView(grid, selectionModel);
+        Assert.Empty(selectionModel.SelectedItems);
+        Assert.Null(grid.SelectedItem);
+
+        selectionModel.SelectAt(0);
+        PumpLayout(grid);
+
         Assert.Equal(0, selectionModel.SelectedIndex);
         Assert.Same(flatItems[0], selectionModel.SelectedItem);
         Assert.Same(flatItems[0], grid.SelectedItem);
@@ -207,11 +221,11 @@ public class DataGridItemsSourceChangeHeadlessTests
     {
         var items = CreateItems("A", 3);
         var (window, grid) = CreateGrid(items, DataGridSelectionUnit.FullRow);
-        var selectionModel = new SelectionModel<object> { SingleSelect = false };
+        var selectionModel = new DataGridSelectionModel<object> { SingleSelect = false };
         grid.Selection = selectionModel;
         PumpLayout(grid);
 
-        selectionModel.Select(2);
+        selectionModel.SelectAt(2);
         PumpLayout(grid);
 
         Exception? selectionException = null;
@@ -311,17 +325,20 @@ public class DataGridItemsSourceChangeHeadlessTests
     }
 
     [AvaloniaFact]
-    public void Filtering_Removes_SelectedItem_Does_Not_Throw_From_SelectionModel()
+    public void Filtering_Out_A_Selected_Item_Hides_It_Rather_Than_Deselecting_It()
     {
         var items = CreateItems("A", 3);
         var view = new DataGridCollectionView(items);
         var (window, grid) = CreateGrid(view, DataGridSelectionUnit.FullRow);
-        var selectionModel = new SelectionModel<object> { SingleSelect = false };
+        var selectionModel = new DataGridSelectionModel<object> { SingleSelect = false };
         grid.Selection = selectionModel;
         PumpLayout(grid);
 
-        selectionModel.Select(2);
+        selectionModel.SelectAt(2);
         PumpLayout(grid);
+
+        var hidden = items[2];
+        Assert.Same(hidden, selectionModel.SelectedItem);
 
         Exception? selectionException = null;
         selectionModel.SelectionChanged += (_, __) =>
@@ -340,11 +357,21 @@ public class DataGridItemsSourceChangeHeadlessTests
         PumpLayout(grid);
 
         Assert.Null(selectionException);
-        Assert.All(selectionModel.SelectedIndexes, index => Assert.InRange(index, 0, view.Count - 1));
-        if (grid.SelectedItem != null)
-        {
-            Assert.Contains((RowItem)grid.SelectedItem, view.Cast<RowItem>());
-        }
+
+        // A filter hides rows; it does not take items out of the data. The selection is a set of
+        // items, so it keeps the one it was given. Only the derived indexes let go of it, because
+        // they describe positions in the view and it no longer occupies one.
+        Assert.Contains(hidden, selectionModel.SelectedItems);
+        Assert.Empty(selectionModel.SelectedIndexes);
+
+        view.Filter = null;
+        PumpLayout(grid);
+
+        // Back at the position it had, with nothing having had to remember it on its behalf.
+        Assert.Contains(hidden, selectionModel.SelectedItems);
+        Assert.Equal(new[] { 2 }, selectionModel.SelectedIndexes.ToArray());
+        Assert.Same(hidden, grid.SelectedItem);
+
         window.Close();
     }
 

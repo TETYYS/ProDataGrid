@@ -1,4 +1,4 @@
-﻿// (c) Copyright Microsoft Corporation.
+// (c) Copyright Microsoft Corporation.
 // This source is subject to the Microsoft Public License (Ms-PL).
 // Please see http://go.microsoft.com/fwlink/?LinkID=131993 for details.
 // All other rights reserved.
@@ -735,6 +735,13 @@ namespace Avalonia.Controls
                 return fastIndex;
             }
 
+            // No O(1) lookup exists for this source. A collection view can walk itself in view order, which
+            // is cheaper overall than mirroring it into a lookup that every mutation invalidates.
+            if (list is DataGridCollectionView collectionView)
+            {
+                return collectionView.GetReferenceIndexOf(dataItem);
+            }
+
             var cachedIndex = FindReferenceIndexWithCache(list, dataItem);
             if (cachedIndex >= 0)
             {
@@ -744,6 +751,11 @@ namespace Avalonia.Controls
             return FindReferenceIndexLinear(list, dataItem);
         }
 
+        /// <summary>
+        /// Resolves the index of <paramref name="dataItem"/> in <paramref name="list"/> without scanning it.
+        /// Returns <c>false</c> when no such lookup is available - it never falls back to a slower strategy,
+        /// so callers can tell whether resolving this item is cheap.
+        /// </summary>
         private bool TryGetFastReferenceIndex(IList list, object dataItem, out int index)
         {
             if (TryResolveFastReferenceIndex(list as IDataGridIndexOf, list, dataItem, out index))
@@ -1238,12 +1250,6 @@ namespace Avalonia.Controls
                     PageSize: > 0,
                     IsPageProjectionChanging: true
                 };
-            List<int> pageSelectionIndexes = isPageProjectionReset
-                ? _owner.Selection?.SelectedIndexes?.ToList()
-                : null;
-            bool updateSnapshotAfterChange = e.Action == NotifyCollectionChangedAction.Reset;
-            var snapshotSuppression = _owner.BeginSelectionSnapshotSuppression();
-            try
             {
                 using var _ = _owner.BeginSelectionChangeScope(
                     DataGridSelectionChangeSource.ItemsSourceChange,
@@ -1254,6 +1260,8 @@ namespace Avalonia.Controls
                     throw DataGridError.DataGrid.CannotChangeItemsWhenLoadingRows();
                 }
 
+                // A page change resets the view without anything leaving the data: selection on
+                // other pages is hidden, not removed, so there is nothing to propose.
                 List<object> selectionSnapshot = _owner.CaptureSelectionSnapshot();
                 DataGrid.ItemsSourceSelectionTransaction selectionTransaction =
                     isPageProjectionReset || _skipPagedProjectionSelectionTransaction
@@ -1267,25 +1275,6 @@ namespace Avalonia.Controls
                 using var sourceMutationDeferral = selectionTransaction != null
                     ? _owner.BeginItemsSourceMutationDeferral()
                     : default;
-                if (_owner.HierarchicalRowsEnabled && _owner.HierarchicalModel != null)
-                {
-                    _owner.CacheHierarchicalSelectionSnapshot(selectionSnapshot);
-                    _owner.CacheHierarchicalSelectionIndexes(_owner.Selection?.SelectedIndexes);
-                }
-                if (e.Action == NotifyCollectionChangedAction.Reset && !isPageProjectionReset)
-                {
-                    var previousSelectionSync = _owner.PushSelectionSync();
-                    try
-                    {
-                        _owner.ClearInvalidSelectionIndexes();
-                    }
-                    finally
-                    {
-                        _owner.PopSelectionSync(previousSelectionSync);
-                    }
-                }
-                bool restoreSyncingSelectionModel = false;
-                bool previousSyncingSelectionModel = false;
 
                 switch (e.Action)
                 {
@@ -1357,41 +1346,44 @@ namespace Avalonia.Controls
                                 _owner.RemoveRowAt(e.OldStartingIndex, item);
                             }
                         }
+
+                        // The items really are gone, unlike the remove half of a Move, so this is the
+                        // one collection change that deselects.
+                        _owner.DeselectRemovedItems(e.OldItems);
                         break;
                     case NotifyCollectionChangedAction.Move:
-                        if (!IsGrouping && e.OldItems != null && e.NewItems != null)
+                        // A move is a move: the rows change position and none is added or removed.
+                        // Taking one out and putting an equivalent one back would end in the same
+                        // arrangement, but it would report the moved rows as having left the grid.
+                        if (!IsGrouping && e.OldItems != null && e.OldStartingIndex >= 0 && e.NewStartingIndex >= 0)
                         {
-                            Debug.Assert(e.OldItems.Count == e.NewItems.Count);
-
-                            for (int i = 0; i < e.OldItems.Count; i++)
-                            {
-                                var oldIndex = e.OldStartingIndex + i;
-                                var newIndex = e.NewStartingIndex + i;
-
-                                if (oldIndex == newIndex)
-                                {
-                                    continue;
-                                }
-
-                                var item = e.OldItems[i];
-                                _owner.RemoveRowAt(oldIndex, item);
-
-                                if (oldIndex < newIndex)
-                                {
-                                    newIndex--;
-                                }
-
-                                _owner.InsertRowAt(newIndex);
-                            }
+                            _owner.MoveRows(e.OldStartingIndex, e.NewStartingIndex, e.OldItems.Count);
                         }
                         break;
                     case NotifyCollectionChangedAction.Replace:
-                        throw new NotSupportedException(); // 
+                        // A replacement is not a removal followed by an insertion. The rows keep
+                        // their containers and are pointed at whatever now occupies their position,
+                        // and the selection goes with them - a replaced row stays selected, only a
+                        // removed one loses it. This used to throw, which left `list[i] = x` - the
+                        // ordinary way to replace an item - unusable, and pushed consumers into the
+                        // remove-then-add that costs them exactly that selection.
+                        if (!IsGrouping && e.OldItems != null && e.NewItems != null && e.NewStartingIndex >= 0)
+                        {
+                            _owner.ReplaceRows(e.NewStartingIndex, e.OldItems, e.NewItems);
+                        }
+                        else
+                        {
+                            // Grouping puts the two items in buckets this cannot reason about, and
+                            // without usable indexes there is nothing to point the existing rows at,
+                            // so the only answer left is to rebuild. DataGridCollectionView reaches
+                            // neither case - it splits a grouped Replace into a Remove and an Add,
+                            // and always reports a pairing otherwise - so this stands as the honest
+                            // answer to a notification that cannot be applied, not as a live path.
+                            _owner.InitializeElements(recycleRows: true);
+                        }
+                        break;
 
                     case NotifyCollectionChangedAction.Reset:
-                        previousSyncingSelectionModel = _owner.PushSelectionSync();
-                        restoreSyncingSelectionModel = true;
-
                         // Did the data type change during the reset?  If not, we can recycle
                         // the existing rows instead of having to clear them all.  We still need to clear our cached
                         // values for DataType and DataProperties, though, because the collection has been reset.
@@ -1409,11 +1401,13 @@ namespace Avalonia.Controls
                         break;
                 }
 
-                if (selectionSnapshot != null &&
-                    e.Action == NotifyCollectionChangedAction.Reset &&
-                    !isPageProjectionReset)
+                if (e.Action == NotifyCollectionChangedAction.Reset)
                 {
-                    _owner.RestoreSelectionFromSnapshot(selectionSnapshot);
+                    // A reset says nothing about what was removed, so keep every selected item the
+                    // underlying data still holds and drop the rest. Previously this stretch of code
+                    // snapshotted the selection up front and restored it here, because the reset
+                    // invalidated the stored indexes; items need no such rescue.
+                    _owner.DropSelectionForRemovedItems();
                 }
 
                 _owner.UpdatePseudoClasses();
@@ -1443,24 +1437,7 @@ namespace Avalonia.Controls
                 // Ensure the visual selection state matches the restored selection after mutations
                 _owner.RefreshVisibleSelection();
 
-                if (_owner.Selection == null)
-                {
-                    _owner.ResyncSelectionModelFromGridSelection();
-                }
-                else
-                {
-                    if (pageSelectionIndexes != null)
-                    {
-                        _owner.RestoreSelectionModelIndexes(pageSelectionIndexes);
-                        _owner.ApplyVisibleSelectionFromSelectionModel();
-                        _owner.RestoreSelectionModelIndexes(pageSelectionIndexes);
-                    }
-                    else
-                    {
-                        _owner.RefreshSelectionFromModel();
-                    }
-                }
-
+                _owner.RefreshSelectionFromModel();
                 if (selectionTransaction == null &&
                     !_owner.IsSelectionModelSourceResetPreflightPending)
                 {
@@ -1469,22 +1446,15 @@ namespace Avalonia.Controls
                 _owner.RequestSelectionOverlayRefresh();
 
                 _owner.CompleteItemsSourceSelectionTransaction(selectionTransaction);
-
-                if (restoreSyncingSelectionModel)
+                if (selectionTransaction != null)
                 {
-                    _owner.PopSelectionSync(previousSyncingSelectionModel);
+                    // The rows changed under the column selection too: a column whose cells are
+                    // selected on every remaining row is a selected column now.
+                    _owner.RefreshSelectedColumnsFromCounts();
                 }
 
                 _owner.InvalidateMeasure();
                 _owner.RaiseAutomationStructureChanged();
-            }
-            finally
-            {
-                snapshotSuppression.Dispose();
-                if (updateSnapshotAfterChange)
-                {
-                    _owner.UpdateSelectionSnapshot();
-                }
             }
         }
 

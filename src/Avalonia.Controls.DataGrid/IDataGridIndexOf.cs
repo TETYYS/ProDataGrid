@@ -20,9 +20,15 @@ namespace Avalonia.Controls
         /// <summary>
         /// Attempts to resolve the index of <paramref name="item"/> using reference semantics.
         /// </summary>
+        /// <remarks>
+        /// Implementations must resolve the index without scanning the collection - this is called from
+        /// layout and selection hot paths that only take this route because it is expected to be cheap.
+        /// Return <c>false</c> when no such lookup is available instead of falling back to a linear search;
+        /// the caller has its own fallbacks and can pick a better one when told the fast path is unavailable.
+        /// </remarks>
         /// <param name="item">The item instance to locate.</param>
         /// <param name="index">When this method returns <c>true</c>, the resolved index.</param>
-        /// <returns><c>true</c> when an index was resolved; otherwise, <c>false</c>.</returns>
+        /// <returns><c>true</c> when an index was resolved cheaply; otherwise, <c>false</c>.</returns>
         bool TryGetReferenceIndex(object item, out int index);
     }
 }

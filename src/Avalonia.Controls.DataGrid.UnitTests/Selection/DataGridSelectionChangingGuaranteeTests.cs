@@ -3,6 +3,7 @@
 
 using System.Collections.ObjectModel;
 using Avalonia.Controls;
+using Avalonia.Controls.DataGridSelection;
 using Avalonia.Controls.Selection;
 using Avalonia.Data;
 using Avalonia.Headless.XUnit;
@@ -59,15 +60,15 @@ public sealed class DataGridSelectionChangingGuaranteeTests
     public void Caller_Owned_SelectionModel_Change_Is_Post_Change_Reconciliation()
     {
         ObservableCollection<string> items = new() { "A", "B" };
-        SelectionModel<string> selection = new() { SingleSelect = false };
+        DataGridSelectionModel<string> selection = new() { SingleSelect = false };
         (Window window, DataGrid grid) = CreateGrid(items, selection);
         try
         {
-            selection.Select(0);
+            selection.SelectAt(0);
             DataGridSelectionChangingGuarantee? guarantee = null;
             grid.SelectionChanging += (_, e) => guarantee = e.Guarantee;
 
-            selection.Select(1);
+            selection.SelectAt(1);
 
             Assert.Equal(DataGridSelectionChangingGuarantee.PostChangeReconciliation, guarantee);
         }
@@ -121,7 +122,7 @@ public sealed class DataGridSelectionChangingGuaranteeTests
 
     private static (Window Window, DataGrid Grid) CreateGrid(
         ObservableCollection<string> items,
-        SelectionModel<string>? selection = null)
+        DataGridSelectionModel<string>? selection = null)
     {
         Window window = new()
         {
@@ -134,7 +135,7 @@ public sealed class DataGridSelectionChangingGuaranteeTests
         {
             AutoGenerateColumns = false,
             ItemsSource = items,
-            Selection = selection ?? new SelectionModel<string> { SingleSelect = false },
+            Selection = selection ?? new DataGridSelectionModel<string> { SingleSelect = false },
         };
         grid.ColumnsInternal.Add(new DataGridTextColumn
         {

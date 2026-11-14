@@ -1,4 +1,4 @@
-// Copyright (c) Wiesław Šoltés. All rights reserved.
+﻿// Copyright (c) Wiesław Šoltés. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for details.
 
 using System;
@@ -16,6 +16,7 @@ using Avalonia.Controls.DataGridHierarchical;
 using Avalonia.Controls.DataGridSorting;
 using Avalonia.Input;
 using Avalonia.Controls.DataGridFiltering;
+using Avalonia.Controls.DataGridSelection;
 using Avalonia.Controls.DataGridSelection;
 using Avalonia.Controls.Selection;
 using Avalonia.Threading;
@@ -172,6 +173,22 @@ public class HierarchicalIntegrationTests
         Assert.Equal(2, change.OldCount);
         Assert.Equal(1, change.NewCount);
         Assert.Equal(3, lastArgs.IndexMap.NewCount);
+    }
+
+    /// <summary>
+    /// A selection model over <paramref name="model"/> with no grid in the picture.
+    /// </summary>
+    /// <remarks>
+    /// The view is what the grid would have supplied, attached directly. A selection model needs
+    /// one - it is where the selection would be shown - but it does not need a whole control, which
+    /// is the point of these tests: what follows is about items surviving sorts and expansion, not
+    /// about rows.
+    /// </remarks>
+    private static DataGridSelectionModel<object> CreateSelection(HierarchicalModel model)
+    {
+        var selection = new DataGridSelectionModel<object>();
+        selection.AttachView(new DataGridHierarchicalSelectionView(model, selection.InvalidateOrder));
+        return selection;
     }
 
     private static IComparer<object> BuildComparer(IReadOnlyList<SortingDescriptor> descriptors)
@@ -438,10 +455,10 @@ public class HierarchicalIntegrationTests
         Assert.Equal(groups[1], model.GetItem(4));
         Assert.Equal(items[2], model.GetItem(5));
 
-        var selection = new SelectionModel<object>();
-        selection.Source = model.Flattened.Select(x => x.Item).ToArray();
-        selection.Select(3); // select a2
-        Assert.Contains(3, selection.SelectedIndexes);
+        // No grid here - just the hierarchy and a selection over it, which is all this is about.
+        var flattened = model.Flattened.Select(x => x.Item).ToArray();
+        var selection = CreateSelection(model);
+        selection.Select(flattened[3]); // a2
         Assert.Same(items[1], selection.SelectedItem);
     }
 
@@ -840,9 +857,9 @@ public class HierarchicalIntegrationTests
         grid.ApplyTemplate();
         grid.UpdateLayout();
 
-        Assert.NotNull(grid.Selection.Source);
+        Assert.NotNull(grid.Selection.View);
 
-        grid.Selection.Select(2); // select childB
+        grid.Selection.SelectAt(2); // select childB
         Assert.Contains(2, grid.Selection.SelectedIndexes);
         root.Children.Move(1, 0); // move childB before childA (index map should remap)
         if (!Dispatcher.UIThread.CheckAccess())
@@ -853,8 +870,8 @@ public class HierarchicalIntegrationTests
         Assert.Equal(true, (bool)hierarchicalEnabledField!.GetValue(grid)!);
         var suppressionField = typeof(DataGrid).GetField("_hierarchicalRefreshSuppressionCount", BindingFlags.Instance | BindingFlags.NonPublic);
         Assert.Equal(0, (int)suppressionField!.GetValue(grid)!);
-        var selectionAdapterField = typeof(DataGrid).GetField("_selectionModelAdapter", BindingFlags.Instance | BindingFlags.NonPublic);
-        Assert.NotNull(selectionAdapterField!.GetValue(grid));
+        // The selection model adapter is gone; there is one model now, resolving against one view.
+        Assert.NotNull(grid.Selection.View);
         Assert.Contains(1, grid.Selection.SelectedIndexes);
         Assert.NotNull(indexMap);
         Assert.Equal(1, indexMap!.MapOldIndexToNew(2));
@@ -904,9 +921,9 @@ public class HierarchicalIntegrationTests
         grid.ApplyTemplate();
         grid.UpdateLayout();
 
-        Assert.NotNull(grid.Selection.Source);
+        Assert.NotNull(grid.Selection.View);
 
-        grid.Selection.Select(2); // select childB
+        grid.Selection.SelectAt(2); // select childB
         Assert.Contains(2, grid.Selection.SelectedIndexes);
         root.Children.Move(1, 2); // move childB after childC
         if (!Dispatcher.UIThread.CheckAccess())
@@ -914,11 +931,150 @@ public class HierarchicalIntegrationTests
             await Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Background);
         }
         Assert.True(adapterEventFired);
-        var selectionAdapterField = typeof(DataGrid).GetField("_selectionModelAdapter", BindingFlags.Instance | BindingFlags.NonPublic);
-        Assert.NotNull(selectionAdapterField!.GetValue(grid));
+        // The selection model adapter is gone; there is one model now, resolving against one view.
+        Assert.NotNull(grid.Selection.View);
 
         Assert.NotNull(indexMap);
         Assert.Equal(3, indexMap!.MapOldIndexToNew(2));
+        Assert.Equal(3, grid.Selection.SelectedIndex);
+        Assert.Same(childB, grid.Selection.SelectedItem);
+    }
+
+    [AvaloniaFact]
+    public async Task Move_Of_Expanded_Node_Is_One_Move_And_Reports_Nothing_To_Selection()
+    {
+        var root = new Item("root");
+        var childA = new Item("a");
+        var childB = new Item("b");
+        childB.Children.Add(new Item("b1"));
+        var childC = new Item("c");
+        root.Children.Add(childA);
+        root.Children.Add(childB);
+        root.Children.Add(childC);
+
+        var model = CreateModel();
+        model.SetRoot(root);
+        model.ExpandAll();
+
+        // [root, a, b, b1, c] - childB and its expanded child travel together as a run of two.
+        var notifications = new List<NotifyCollectionChangedEventArgs>();
+        ((INotifyCollectionChanged)model.ObservableFlattened).CollectionChanged += (_, e) => notifications.Add(e);
+
+        var grid = new DataGrid
+        {
+            HierarchicalModel = model,
+            HierarchicalRowsEnabled = true,
+            AutoGenerateColumns = false,
+            ItemsSource = model.ObservableFlattened
+        };
+
+        grid.ColumnsInternal.Add(new DataGridHierarchicalColumn
+        {
+            Header = "Name",
+            Binding = new Avalonia.Data.Binding("Item.Name")
+        });
+
+        grid.ApplyTemplate();
+        grid.UpdateLayout();
+
+        grid.Selection.SelectAt(2); // childB
+        Assert.Contains(2, grid.Selection.SelectedIndexes);
+
+        var selectionChanges = new List<DataGridSelectionModelChangedEventArgs>();
+        grid.Selection.SelectionChanged += (_, e) => selectionChanges.Add(e);
+        notifications.Clear();
+
+        root.Children.Move(1, 2); // childB after childC
+
+        if (!Dispatcher.UIThread.CheckAccess())
+        {
+            await Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Background);
+        }
+
+        Assert.Equal(
+            new[] { "root", "a", "c", "b", "b1" },
+            model.Flattened.Select(node => ((Item)node.Item).Name).ToArray());
+
+        // One Move, not a Remove followed by an Add. Two notifications would end in the same
+        // arrangement while telling every consumer that these rows left the grid and different
+        // ones arrived.
+        var notification = Assert.Single(notifications);
+        Assert.Equal(NotifyCollectionChangedAction.Move, notification.Action);
+        Assert.Equal(2, notification.OldStartingIndex);
+        Assert.Equal(3, notification.NewStartingIndex);
+        Assert.Equal(2, notification.OldItems!.Count);
+
+        // The selection names the item, so it went along for the ride and the reported index
+        // follows the row.
+        Assert.Equal(3, grid.Selection.SelectedIndex);
+        Assert.Same(childB, grid.Selection.SelectedItem);
+        Assert.True(grid.GetRowSelectionFromRowIndex(3));
+        Assert.False(grid.GetRowSelectionFromRowIndex(2));
+
+        // A move is neither a selection nor a deselection, so nothing is reported.
+        Assert.Empty(selectionChanges);
+    }
+
+    [AvaloniaFact]
+    public async Task Move_Of_Expanded_Node_Through_CollectionView_Is_Still_One_Move()
+    {
+        var root = new Item("root");
+        var childA = new Item("a");
+        var childB = new Item("b");
+        childB.Children.Add(new Item("b1"));
+        var childC = new Item("c");
+        root.Children.Add(childA);
+        root.Children.Add(childB);
+        root.Children.Add(childC);
+
+        var model = CreateModel();
+        model.SetRoot(root);
+        model.ExpandAll();
+
+        var view = new DataGridCollectionView(model.Flattened);
+
+        var grid = new DataGrid
+        {
+            HierarchicalModel = model,
+            HierarchicalRowsEnabled = true,
+            AutoGenerateColumns = false,
+            ItemsSource = view
+        };
+
+        grid.ColumnsInternal.Add(new DataGridHierarchicalColumn
+        {
+            Header = "Name",
+            Binding = new Avalonia.Data.Binding("Item.Name")
+        });
+
+        grid.ApplyTemplate();
+        grid.UpdateLayout();
+
+        grid.Selection.SelectAt(2); // childB
+        Assert.Contains(2, grid.Selection.SelectedIndexes);
+
+        var viewNotifications = new List<NotifyCollectionChangedEventArgs>();
+        ((INotifyCollectionChanged)view).CollectionChanged += (_, e) => viewNotifications.Add(e);
+
+        root.Children.Move(1, 2);
+
+        if (!Dispatcher.UIThread.CheckAccess())
+        {
+            await Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Background);
+        }
+
+        // The view used to fall back to a full refresh for any move of more than one item, so a
+        // run - which is what an expanded node is - always arrived as a Reset. The rows the caller
+        // took care to describe as moved were reported as the whole collection being replaced.
+        var notification = Assert.Single(viewNotifications);
+        Assert.Equal(NotifyCollectionChangedAction.Move, notification.Action);
+        Assert.Equal(2, notification.OldStartingIndex);
+        Assert.Equal(3, notification.NewStartingIndex);
+
+        Assert.Equal(
+            new[] { "root", "a", "c", "b", "b1" },
+            view.Cast<HierarchicalNode>().Select(node => ((Item)node.Item).Name).ToArray());
+
         Assert.Equal(3, grid.Selection.SelectedIndex);
         Assert.Same(childB, grid.Selection.SelectedItem);
     }
@@ -957,7 +1113,7 @@ public class HierarchicalIntegrationTests
         grid.ApplyTemplate();
         grid.UpdateLayout();
 
-        grid.Selection.Select(2); // select childB
+        grid.Selection.SelectAt(2); // select childB
         root.Children.Move(1, 2); // move childB after childC
         if (!Dispatcher.UIThread.CheckAccess())
         {
@@ -1010,7 +1166,7 @@ public class HierarchicalIntegrationTests
         grid.ApplyTemplate();
         grid.UpdateLayout();
 
-        grid.Selection.Select(4); // select "d"
+        grid.Selection.SelectAt(4); // select "d"
         Assert.Contains(4, grid.Selection.SelectedIndexes);
 
         children.ReplaceRange(1, new[] { children[1] }, new[] { new Item("b1"), new Item("b2") });
@@ -1064,7 +1220,7 @@ public class HierarchicalIntegrationTests
         grid.ApplyTemplate();
         grid.UpdateLayout();
 
-        grid.Selection.Select(4); // select "d"
+        grid.Selection.SelectAt(4); // select "d"
         Assert.Contains(4, grid.Selection.SelectedIndexes);
 
         children.ReplaceRange(1, new[] { children[1] }, new[] { new Item("b1"), new Item("b2") });
@@ -1120,9 +1276,9 @@ public class HierarchicalIntegrationTests
         grid.ApplyTemplate();
         grid.UpdateLayout();
 
-        Assert.NotNull(grid.Selection.Source);
+        Assert.NotNull(grid.Selection.View);
 
-        grid.Selection.Select(2); // select childB
+        grid.Selection.SelectAt(2); // select childB
         Assert.Contains(2, grid.Selection.SelectedIndexes);
         root.Children.Move(1, 2); // move childB after childC
         if (!Dispatcher.UIThread.CheckAccess())
@@ -1173,9 +1329,9 @@ public class HierarchicalIntegrationTests
         grid.ApplyTemplate();
         grid.UpdateLayout();
 
-        Assert.NotNull(grid.Selection.Source);
+        Assert.NotNull(grid.Selection.View);
 
-        grid.Selection.Select(2); // select childB
+        grid.Selection.SelectAt(2); // select childB
         Assert.Contains(2, grid.Selection.SelectedIndexes);
         root.Children.Move(1, 2); // move childB after childC
         if (!Dispatcher.UIThread.CheckAccess())
@@ -1229,13 +1385,8 @@ public class HierarchicalIntegrationTests
         grid.ApplyTemplate();
         grid.UpdateLayout();
 
-        grid.Selection.Select(2); // select childB
+        grid.Selection.SelectAt(2); // select childB
         Assert.Contains(2, grid.Selection.SelectedIndexes);
-
-        var lostSelectionCount = 0;
-        var indexesChangedCount = 0;
-        grid.Selection.LostSelection += (_, __) => lostSelectionCount++;
-        grid.Selection.IndexesChanged += (_, __) => indexesChangedCount++;
 
         var replacement = new Item("b2");
         root.Children[1] = replacement; // replace childB
@@ -1247,11 +1398,13 @@ public class HierarchicalIntegrationTests
 
         Assert.NotNull(indexMap);
         Assert.Equal(-1, indexMap!.MapOldIndexToNew(2)); // replace currently drops the old index
-        Assert.DoesNotContain(2, grid.Selection.SelectedIndexes);
-        Assert.Null(grid.Selection.SelectedItem);
-        Assert.Null(view.CurrentItem);
-        Assert.InRange(lostSelectionCount, 0, 2);
-        Assert.InRange(indexesChangedCount, 0, 2);
+
+        // A replacement is not a removal: the row keeps its place and its selection, and what is
+        // selected there is now the item that took the old one's place. This used to assert that
+        // the selection was dropped, which is what a remove-then-insert would have done.
+        Assert.Contains(2, grid.Selection.SelectedIndexes);
+        Assert.Contains(replacement, grid.Selection.SelectedItems);
+        Assert.DoesNotContain(childB, grid.Selection.SelectedItems);
     }
 
     [AvaloniaFact]
@@ -1291,13 +1444,8 @@ public class HierarchicalIntegrationTests
         grid.ApplyTemplate();
         grid.UpdateLayout();
 
-        grid.Selection.Select(2); // select childB
+        grid.Selection.SelectAt(2); // select childB
         Assert.Contains(2, grid.Selection.SelectedIndexes);
-
-        var lostSelectionCount = 0;
-        var indexesChangedCount = 0;
-        grid.Selection.LostSelection += (_, __) => lostSelectionCount++;
-        grid.Selection.IndexesChanged += (_, __) => indexesChangedCount++;
 
         var replacement = new Item("b2");
         root.Children[1] = replacement; // replace childB
@@ -1309,10 +1457,11 @@ public class HierarchicalIntegrationTests
 
         Assert.NotNull(indexMap);
         Assert.Equal(-1, indexMap!.MapOldIndexToNew(2)); // replace currently drops the old index
-        Assert.DoesNotContain(2, grid.Selection.SelectedIndexes);
-        Assert.Null(grid.Selection.SelectedItem);
-        Assert.InRange(lostSelectionCount, 0, 2);
-        Assert.InRange(indexesChangedCount, 0, 2);
+
+        // Grouping sends the change down the full-refresh path rather than rebinding the row in
+        // place, which changes how the rows are rebuilt but not what is selected.
+        Assert.Contains(replacement, grid.Selection.SelectedItems);
+        Assert.DoesNotContain(childB, grid.Selection.SelectedItems);
     }
 
     [AvaloniaFact]
@@ -1353,13 +1502,11 @@ public class HierarchicalIntegrationTests
         grid.ApplyTemplate();
         grid.UpdateLayout();
 
-        grid.Selection.Select(1); // select childA
+        grid.Selection.SelectAt(1); // select childA
         Assert.Contains(1, grid.Selection.SelectedIndexes);
 
-        var lostSelectionCount = 0;
-        var indexesChangedCount = 0;
-        grid.Selection.LostSelection += (_, __) => lostSelectionCount++;
-        grid.Selection.IndexesChanged += (_, __) => indexesChangedCount++;
+        var changes = new List<DataGridSelectionModelChangedEventArgs>();
+        grid.Selection.SelectionChanged += (_, e) => changes.Add(e);
 
         view.Refresh(); // forces reset/no index map
 
@@ -1370,8 +1517,11 @@ public class HierarchicalIntegrationTests
 
         Assert.Contains(1, grid.Selection.SelectedIndexes);
         Assert.Same(childA, grid.Selection.SelectedItem);
-        Assert.Equal(0, lostSelectionCount);
-        Assert.InRange(indexesChangedCount, 0, 1);
+
+        // A reset that keeps every item leaves the selection alone, so there is nothing to report.
+        // The model used to need an index remap here, and that is what raised the events this
+        // assertion replaces.
+        Assert.Empty(changes);
     }
 
     [AvaloniaFact]
@@ -1391,8 +1541,8 @@ public class HierarchicalIntegrationTests
         model.SetRoot(root);
         model.Expand(model.Root!);
 
-        var selection = new SelectionModel<object>();
-        selection.Select(1); // selects childA in initial order
+        var selection = CreateSelection(model);
+        selection.Select(childA); // "b", the second child before sorting
 
         var sorting = new SortingModel();
         sorting.SortingChanged += (_, e) =>
@@ -1408,15 +1558,15 @@ public class HierarchicalIntegrationTests
 
         adapter.HandleHeaderClick(column, KeyModifiers.None); // ascending
 
-        var newIndex = model.IndexOf(childA);
-        Assert.Equal(2, newIndex); // childA moved after sorting
-        selection.Clear();
-        selection.Select(newIndex);
-        Assert.True(selection.IsSelected(newIndex));
+        Assert.Equal(2, model.IndexOf(childA)); // childA moved after sorting
+
+        // Nothing had to re-point the selection afterwards: it names the item, so the sort passed
+        // it by. Reselecting at the new index was the old model's way of papering over that.
+        Assert.True(selection.IsSelected(childA));
     }
 
     [AvaloniaFact]
-    public void Selection_Reapplies_AfterSortAndExpansion()
+    public void Selection_Survives_SortAndExpansion()
     {
         var root = new Item("root");
         var childA = new Item("b");
@@ -1432,11 +1582,11 @@ public class HierarchicalIntegrationTests
         model.Expand(model.GetNode(1));
         model.Expand(model.GetNode(3)); // expand both children
 
-        var selection = new SelectionModel<object>();
+        var selection = CreateSelection(model);
         var targetItem = childA.Children[0];
         var initialIndex = model.IndexOf(targetItem);
-        selection.Select(initialIndex);
-        Assert.True(selection.IsSelected(initialIndex));
+        selection.Select(targetItem);
+        Assert.True(selection.IsSelected(targetItem));
 
         var sorting = new SortingModel();
         sorting.SortingChanged += (_, e) =>
@@ -1454,10 +1604,11 @@ public class HierarchicalIntegrationTests
 
         var newIndex = model.IndexOf(targetItem);
         Assert.NotEqual(initialIndex, newIndex); // moved due to sort
-        selection.Clear();
-        selection.Select(newIndex);
-        Assert.True(selection.IsSelected(newIndex));
-        Assert.False(selection.IsSelected(initialIndex));
+
+        // Nothing reapplies the selection - it names the item, so the sort carried it along. The
+        // old model stored the index, so this test used to clear and reselect at the new position
+        // to stay green, which only ever asserted that the test knew where the item had gone.
+        Assert.True(selection.IsSelected(targetItem));
     }
 
     [Fact]

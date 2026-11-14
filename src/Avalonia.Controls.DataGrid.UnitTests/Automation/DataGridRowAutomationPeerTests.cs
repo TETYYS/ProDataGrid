@@ -362,7 +362,7 @@ public sealed class DataGridRowAutomationPeerTests
         Assert.NotEmpty(grid.DisplayData.GetScrollingRows());
         int deepIndex = model.IndexOf(deepParent);
         Assert.True(deepIndex > grid.DisplayData.LastScrollingSlot);
-        grid.Selection.Select(deepIndex);
+        grid.Selection.SelectAt(deepIndex);
 
         var gridPeer = Assert.IsType<DataGridAutomationPeer>(
             ControlAutomationPeer.CreatePeerForElement(grid));
@@ -443,7 +443,7 @@ public sealed class DataGridRowAutomationPeerTests
             SelectionMode = DataGridSelectionMode.Extended,
         };
         int targetIndex = model.IndexOf(target);
-        grid.Selection.Select(targetIndex);
+        grid.Selection.SelectAt(targetIndex);
         var gridPeer = new DataGridAutomationPeer(grid);
         var peer = Assert.IsType<DataGridUnrealizedRowAutomationPeer>(
             Assert.Single(gridPeer.GetSelection()));
@@ -464,7 +464,7 @@ public sealed class DataGridRowAutomationPeerTests
         model.FindNode(target)!.IsLoading = true;
         Assert.Equal(0, expandCollapseNotifications);
 
-        grid.Selection.Select(targetIndex);
+        grid.Selection.SelectAt(targetIndex);
         var replacement = Assert.IsType<DataGridUnrealizedRowAutomationPeer>(
             Assert.Single(gridPeer.GetSelection()));
         Assert.NotSame(peer, replacement);
@@ -517,7 +517,7 @@ public sealed class DataGridRowAutomationPeerTests
         window.UpdateLayout();
 
         int leafIndex = model.IndexOf(children[^1]);
-        grid.Selection.Select(leafIndex);
+        grid.Selection.SelectAt(leafIndex);
         var gridPeer = Assert.IsType<DataGridAutomationPeer>(
             ControlAutomationPeer.CreatePeerForElement(grid));
         ISelectionProvider selectionProvider = Assert.IsAssignableFrom<ISelectionProvider>(
@@ -831,10 +831,11 @@ public sealed class DataGridRowAutomationPeerTests
         _ = rowPeer.GetProvider<IExpandCollapseProvider>();
         var unrealizedGrid = new DataGrid();
         object[] unrealizedSource = { new object() };
-        unrealizedGrid.DataConnection.DataSource = unrealizedSource;
-        unrealizedGrid.Selection.Source = unrealizedSource;
+        // Selection resolves rows through a collection view, so the source is given as one.
+        unrealizedGrid.DataConnection.DataSource = new Avalonia.Collections.DataGridCollectionView(unrealizedSource);
+        unrealizedGrid.UpdateSelectionModelSource();
         var unrealizedGridPeer = new DataGridAutomationPeer(unrealizedGrid);
-        unrealizedGrid.Selection.Select(0);
+        unrealizedGrid.Selection.Select(unrealizedSource[0]);
         var unrealizedPeer = Assert.IsType<DataGridUnrealizedRowAutomationPeer>(
             Assert.Single(unrealizedGridPeer.GetSelection()));
         // Keep the peer in the grid's cache while attaching it to the externally-owned node.

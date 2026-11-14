@@ -49,6 +49,7 @@ internal
                 return false;
             }
 
+            using var columnsDelta = BeginSelectedColumnsDelta();
             var added = new List<DataGridCellInfo>();
             var removed = new List<DataGridCellInfo>();
 
@@ -116,6 +117,7 @@ internal
                 return false;
             }
 
+            using var columnsDelta = BeginSelectedColumnsDelta();
             var added = new List<DataGridCellInfo>();
             var removed = new List<DataGridCellInfo>();
 

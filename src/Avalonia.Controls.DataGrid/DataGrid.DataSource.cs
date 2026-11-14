@@ -27,8 +27,6 @@ internal
 #endif
     partial class DataGrid
     {
-        private bool _selectionModelSourceLayoutPending;
-        private List<int> _selectionModelSourceIndexesPending;
 
         /// <summary>
         /// ItemsSourceProperty property changed handler.
@@ -45,12 +43,6 @@ internal
 
             var oldValue = (IEnumerable)e.OldValue;
             var newItemsSource = (IEnumerable)e.NewValue;
-            List<int> selectionIndexesSnapshot = _selectionModelExplicitlySet &&
-                _selectionModelAdapter?.Model.SelectedIndexes is { Count: > 0 } selectedIndexes
-                ? new List<int>(selectedIndexes)
-                : null;
-            _selectionModelSourceLayoutPending = selectionIndexesSnapshot is { Count: > 0 };
-            _selectionModelSourceIndexesPending = selectionIndexesSnapshot;
             _ownsHierarchicalItemsSource = ReferenceEquals(newItemsSource, _hierarchicalItemsSource);
             if (!_ownsHierarchicalItemsSource && !ReferenceEquals(newItemsSource, _hierarchicalItemsSource))
             {
@@ -103,7 +95,9 @@ internal
                         ? BeginItemsSourceSelectionTransaction(
                             selectionSnapshot,
                             newCollectionView,
-                            preserveSelection: false)
+                            // The selection is a set of items and survives the swap for every item
+                            // the new source still holds, so that is what is proposed.
+                            preserveSelection: true)
                         : null;
                 using var selectionCommit = selectionTransaction != null
                     ? BeginSelectionCommit()
@@ -115,20 +109,14 @@ internal
                 DataConnection.UnWireEvents(DataConnection.DataSource);
                 DataConnection.ClearDataProperties();
                 ClearRowGroupHeadersTable();
-
-                // The old selected indexes are no longer relevant. There's a perf benefit from
-                // updating the selected indexes with a null DataSource, because we know that all
-                // of the previously selected indexes have been removed from selection
                 DataConnection.DataSource = null;
-                _selectedItems.UpdateIndexes();
-                CoerceSelectedItem();
 
                 DataConnection.DataSource = newCollectionView;
 
                 if (oldCollectionView != DataConnection.CollectionView)
                 {
-                    RaisePropertyChanged(CollectionViewProperty, 
-                        oldCollectionView, 
+                    RaisePropertyChanged(CollectionViewProperty,
+                        oldCollectionView,
                         newCollectionView);
                 }
 
@@ -143,34 +131,6 @@ internal
                 // performs the structural row update. Wiring in the opposite order exposes a
                 // first proposal from DataConnection followed by reset/selection proposals.
                 UpdateSelectionModelSource();
-
-                if (selectionTransaction == null &&
-                    selectionIndexesSnapshot is { Count: > 0 } &&
-                    _selectionModelAdapter?.Model is { SelectedIndexes.Count: 0 } selectionModel)
-                {
-                    _syncingSelectionModel = true;
-                    try
-                    {
-                        using (selectionModel.BatchUpdate())
-                        {
-                            int sourceCount = selectionModel.Source is ICollection collection
-                                ? collection.Count
-                                : DataConnection?.Count ?? 0;
-                            for (int i = 0; i < selectionIndexesSnapshot.Count; i++)
-                            {
-                                int index = selectionIndexesSnapshot[i];
-                                if (index >= 0 && index < sourceCount)
-                                {
-                                    selectionModel.Select(index);
-                                }
-                            }
-                        }
-                    }
-                    finally
-                    {
-                        _syncingSelectionModel = false;
-                    }
-                }
 
                 if (DataConnection.DataSource != null)
                 {
@@ -188,27 +148,15 @@ internal
                     DataConnection.WireEvents(DataConnection.DataSource);
                 }
 
-                var modelSelectionPending = _selectionModelAdapter?.Model != null &&
-                    (_selectionModelAdapter.Model.SelectedIndex >= 0 ||
-                     _selectionModelAdapter.Model.SelectedItems.Count > 0);
+                // The selection is a set of items, so swapping the view neither invalidates nor
+                // reorders it - there is nothing to snapshot and nothing to remap. Only items the new
+                // source does not contain have to go, which keeps a swap to an equivalent view (a
+                // re-wrapped DataGridCollectionView over the same data) fully selection-preserving.
+                DropSelectionForRemovedItems();
 
-                // Clear out the old rows and remove the generated columns
-                bool previousSelectionSync = false;
-                if (modelSelectionPending)
-                {
-                    previousSelectionSync = PushSelectionSync();
-                }
-                try
-                {
-                    ClearRows(false); //recycle
-                }
-                finally
-                {
-                    if (modelSelectionPending)
-                    {
-                        PopSelectionSync(previousSelectionSync);
-                    }
-                }
+                var modelSelectionPending = _selectionModel is { Count: > 0 };
+
+                ClearRows(false); //recycle
                 RemoveAutoGeneratedColumns();
 
                 // Notify the estimator about the data source change
@@ -226,8 +174,6 @@ internal
                         SelectedItem = ProjectSelectionItem(DataConnection.CollectionView.CurrentItem);
                     }
 
-                    SyncSelectionModelFromGridSelection();
-
                     if (_selectedItemsBinding != null && _selectedItemsBinding.Count > 0)
                     {
                         ApplySelectedItemsFromBinding(_selectedItemsBinding);
@@ -235,7 +181,8 @@ internal
                 }
                 else
                 {
-                    ApplySelectionFromSelectionModel();
+                    CoerceSelectedItem();
+                    RefreshVisibleSelection();
                 }
 
                 // Treat this like the DataGrid has never been measured because all calculations at
@@ -249,119 +196,63 @@ internal
                 OnDataSourceChangedForSummaries();
                 OnDataSourceChangedForValidation();
                 RaiseAutomationStructureChanged();
-
-                if (_selectionModelSourceLayoutPending)
-                {
-                    Dispatcher.UIThread.Post(
-                        CompletePendingSelectionModelSourceLayout,
-                        DispatcherPriority.SystemIdle);
-                }
             }
         }
 
-        private void UpdateSelectionModelSource()
+
+        /// <summary>
+        /// Membership test for the underlying data, ignoring whether the current filter, page or
+        /// expansion state lets an item through, so that a selected row taken out of sight is hidden
+        /// rather than deselected.
+        /// </summary>
+        /// <remarks>
+        /// Each view answers this itself, because only it knows what its source holds beyond what it
+        /// shows. Falling back to <see cref="DataGridSelection.IDataGridSelectionView.IndexOf"/> for a
+        /// view that does not is a last resort and reads hidden as removed.
+        /// </remarks>
+        private Func<object, bool> SnapshotSelectionSourceMembership()
         {
-            if (_selectionModelAdapter != null)
+            if (_selectionView is DataGridSelection.IDataGridSelectionSourceMembership source)
             {
-                _syncingSelectionModel = true;
-                try
-                {
-                    var view = DataConnection?.CollectionView;
-                    IEnumerable source = view;
-
-                    if (view is DataGridCollectionView projected && projected.PageSize > 0)
-                    {
-                        if (_pagedSelectionSource == null || !ReferenceEquals(_pagedSelectionSourceView, projected))
-                        {
-                            _pagedSelectionSource?.Dispose();
-                            _pagedSelectionSource = new DataGridSelection.DataGridPagedSelectionSource(projected);
-                            _pagedSelectionSourceView = projected;
-                        }
-                        source = _pagedSelectionSource;
-                    }
-                    else
-                    {
-                        _pagedSelectionSource?.Dispose();
-                        _pagedSelectionSource = null;
-                        _pagedSelectionSourceView = null;
-                    }
-
-                    _selectionModelAdapter.Model.Source = source;
-                }
-                finally
-                {
-                    _syncingSelectionModel = false;
-                }
+                var contains = source.SnapshotSourceMembership();
+                return item => contains(item);
             }
+
+            var view = _selectionView;
+            return item => (view?.IndexOf(item) ?? -1) >= 0;
         }
 
+        /// <summary>
+        /// Deselects items the underlying data no longer contains, after a change that did not say
+        /// which ones went (a Reset).
+        /// </summary>
+        internal void DropSelectionForRemovedItems()
+        {
+            if (_selectionModel is not { Count: > 0 })
+            {
+                return;
+            }
+
+            _selectionModel.RetainOnly(SnapshotSelectionSourceMembership());
+        }
+
+        /// <summary>
+        /// The selected items, in view order, or null when nothing is selected. What the
+        /// SelectionChanging previews start from.
+        /// </summary>
         internal List<object> CaptureSelectionSnapshot()
         {
-            // Prefer capturing via the selection model to avoid losing selection when the view
-            // issues a Reset (sorting/filtering/paging).
-            if (_selectionModelAdapter?.Model is { } model)
-            {
-                if (_selectionModelSnapshot is { Count: > 0 })
-                {
-                    return new List<object>(_selectionModelSnapshot);
-                }
-
-                if (model.SelectedIndexes is { Count: > 0 } indexes &&
-                    model.Source is IList list &&
-                    list.Count > 0)
-                {
-                    var snapshot = new List<object>();
-                    foreach (var index in indexes)
-                    {
-                        if (index >= 0 && index < list.Count)
-                        {
-                            snapshot.Add(list[index]);
-                        }
-                    }
-
-                    if (snapshot.Count > 0)
-                    {
-                        return snapshot;
-                    }
-                }
-
-                if (_selectionModelSnapshot is { Count: > 0 })
-                {
-                    return new List<object>(_selectionModelSnapshot);
-                }
-            }
-
-            if (SelectedItems is { Count: > 0 } selected)
-            {
-                return new List<object>(selected.Cast<object>());
-            }
-
-            if (_hierarchicalRowsEnabled && _hierarchicalModel != null &&
-                _pendingHierarchicalSelectionSnapshot is { Count: > 0 })
-            {
-                return new List<object>(_pendingHierarchicalSelectionSnapshot);
-            }
-
-            return null;
-        }
-
-        internal void CacheHierarchicalSelectionSnapshot(IReadOnlyList<object> snapshot)
-        {
-            _pendingHierarchicalSelectionSnapshot = snapshot != null && snapshot.Count > 0
-                ? new List<object>(snapshot)
+            return _selectionModel is { Count: > 0 }
+                ? new List<object>(_selectionModel.SelectedItems)
                 : null;
         }
 
-        internal void CacheHierarchicalSelectionIndexes(IReadOnlyList<int> indexes)
-        {
-            _pendingHierarchicalSelectionIndexes = indexes != null && indexes.Count > 0
-                ? new List<int>(indexes)
-                : null;
-        }
-
+        /// <summary>
+        /// Makes <paramref name="selectedItems"/> the selection, offering it to SelectionChanging first.
+        /// </summary>
         internal void RestoreSelectionFromSnapshot(IReadOnlyList<object> selectedItems)
         {
-            if (_selectionModelAdapter == null || selectedItems == null)
+            if (_selectionModel == null || selectedItems == null)
             {
                 return;
             }
@@ -381,92 +272,8 @@ internal
             }
 
             using var commit = BeginSelectionCommit();
-            _syncingSelectionModel = true;
-            try
-            {
-                int firstIndex = -1;
-
-                using (_selectionModelAdapter.SelectedItemsView.SuppressNotifications())
-                using (_selectionModelAdapter.Model.BatchUpdate())
-                {
-                    _selectionModelAdapter.Model.Clear();
-                    foreach (object item in selectedItems)
-                    {
-                        int index = GetSelectionModelIndexOfItem(item);
-                        if (index >= 0)
-                        {
-                            if (firstIndex == -1)
-                            {
-                                firstIndex = index;
-                            }
-
-                            _selectionModelAdapter.Select(index);
-                        }
-                    }
-                }
-
-                if (firstIndex >= 0)
-                {
-                    _preferredSelectionIndex = firstIndex;
-                }
-
-                ApplySelectionFromSelectionModel();
-
-                foreach (object item in selectedItems)
-                {
-                    int index = GetSelectionModelIndexOfItem(item);
-                    if (index >= 0)
-                    {
-                        SetValueNoCallback(SelectedItemProperty, ProjectSelectionItem(item));
-                        SetValueNoCallback(SelectedIndexProperty, index);
-                        break;
-                    }
-                }
-            }
-            finally
-            {
-                _syncingSelectionModel = false;
-            }
+            _selectionModel.SetSelectedItems(selectedItems);
         }
-
-        private void SyncSelectionModelFromGridSelection()
-        {
-            if (_selectionModelAdapter == null ||
-                DataConnection?.CollectionView == null ||
-                _syncingSelectionModel ||
-                _selectionModelSourceLayoutPending)
-            {
-                return;
-            }
-
-            _selectionModelAdapter.Model.BeginBatchUpdate();
-            _syncingSelectionModel = true;
-            try
-            {
-                _selectionModelAdapter.Model.Clear();
-                foreach (object item in _selectedItems)
-                {
-                    int index = GetSelectionModelIndexOfItem(item);
-                    if (index >= 0)
-                    {
-                        _selectionModelAdapter.Model.Select(index);
-                    }
-                }
-            }
-            finally
-            {
-                _selectionModelAdapter.Model.EndBatchUpdate();
-                _syncingSelectionModel = false;
-            }
-
-            UpdateSelectionSnapshot();
-        }
-
-        internal void ResyncSelectionModelFromGridSelection()
-        {
-            SyncSelectionModelFromGridSelection();
-        }
-
 
         internal void RefreshRowsAndColumns(bool clearRows, bool recycleDisplayedRows = false)
         {
@@ -515,7 +322,6 @@ internal
                     }
                     else
                     {
-                        RestoreSelectionModelBeforeCompletingPendingLayout();
                         _makeFirstDisplayedCellCurrentCellPending = false;
                         _desiredCurrentColumnIndex = -1;
                         FlushCurrentCellChanged();
@@ -551,7 +357,7 @@ internal
                 guarantee: DataGridSelectionChangingGuarantee.PostChangeReconciliation);
 
             var currentSelectionIndex = currentPosition;
-            if (_selectionModelAdapter != null && TryGetPagingInfo(out _, out var pageStart))
+            if (_selectionModel != null && TryGetPagingInfo(out _, out var pageStart))
             {
                 currentSelectionIndex = pageStart + currentPosition;
             }
@@ -595,17 +401,9 @@ internal
                 return;
             }
 
-            if (_selectionModelAdapter != null &&
-                _selectionModelAdapter.Model.SelectedIndexes.Count > 0 &&
-                !currentInSelection)
+            if (_selectionModel is { Count: > 0 } && !currentInSelection)
             {
-                if (!TryPreviewSelectionModelSelection())
-                {
-                    return;
-                }
-
-                using var commit = BeginSelectionCommit();
-                ApplySelectionFromSelectionModel();
+                RefreshSelectionFromModel();
                 return;
             }
 

@@ -60,37 +60,33 @@ public sealed class DataGridGeneratedSelectionControllerTests
     }
 
     [Fact]
-    public void Identity_model_bridge_round_trips_loaded_selection()
+    public void Selection_model_bridge_round_trips_loaded_selection()
     {
         Row[] rows = { new(1, "one"), new(2, "two"), new(3, "three") };
         DataGridGeneratedSelectionController<Row, int> controller = CreateController();
         controller.ResetSource(rows);
         controller.SelectKey(2);
-        DataGridSelection.IdentitySelectionModel model = controller.CreateIdentitySelectionModel(rows);
+        DataGridSelection.DataGridSelectionModel<Row> model = controller.CreateSelectionModel();
 
-        Assert.Equal(1, model.SelectedIndex);
-        model.Select(2);
+        Assert.Same(rows[1], Assert.Single(model.SelectedItems));
+        model.Select(rows[2]);
         controller.CaptureFrom(model, DataGridGeneratedSelectionOrigin.Keyboard);
 
         Assert.Equal(new[] { 2, 3 }, controller.SelectedItemKeys.OrderBy(static key => key));
     }
 
     [Fact]
-    public void Identity_model_projection_uses_the_models_filtered_and_reordered_source()
+    public void Selection_model_identifies_rows_by_stable_key()
     {
-        Row one = new(1, "one");
-        Row two = new(2, "two");
-        Row three = new(3, "three");
         DataGridGeneratedSelectionController<Row, int> controller = CreateController();
-        controller.ResetSource(new[] { one, two, three });
+        controller.ResetSource(new[] { new Row(1, "one"), new Row(2, "two") });
         controller.SelectKey(2);
-        controller.SelectKey(3);
 
-        DataGridSelection.IdentitySelectionModel model =
-            controller.CreateIdentitySelectionModel(new[] { three, two });
+        DataGridSelection.DataGridSelectionModel<Row> model = controller.CreateSelectionModel();
 
-        Assert.Equal(new[] { three, two }, model.SelectedItems);
-        Assert.Equal(new[] { 0, 1 }, model.SelectedIndexes);
+        // A different instance carrying the same key is the same row.
+        Assert.True(model.IsSelected(new Row(2, "two, reloaded")));
+        Assert.False(model.IsSelected(new Row(1, "one")));
     }
 
     [Fact]

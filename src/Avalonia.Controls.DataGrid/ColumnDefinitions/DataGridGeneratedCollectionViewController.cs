@@ -80,8 +80,6 @@ namespace Avalonia.Controls
         private readonly IDataGridItemKey<TItem, TKey> _keyAccessor;
         private readonly IEqualityComparer<TKey> _keyComparer;
         private readonly bool _preserveCurrentItemByKey;
-        private IEnumerable _selectionSource;
-        private IDisposable _selectionSourceLifetime;
         private bool _hasCurrentKey;
         private TKey _currentKey;
         private bool _currentKeyDetached;
@@ -107,8 +105,7 @@ namespace Avalonia.Controls
                 selectionProfile,
                 _keyComparer);
             ResetSelectionIndex();
-            _selectionSource = CreateSelectionSource(View, out _selectionSourceLifetime);
-            SelectionModel = SelectionController.CreateIdentitySelectionModel(_selectionSource);
+            SelectionModel = SelectionController.CreateSelectionModel();
             SelectionModel.SelectionChanged += OnSelectionModelChanged;
             SelectionController.SelectionChanged += OnGeneratedSelectionChanged;
             AttachView(View);
@@ -124,8 +121,8 @@ namespace Avalonia.Controls
         /// <summary>Gets the stable-key selection controller.</summary>
         public DataGridGeneratedSelectionController<TItem, TKey> SelectionController { get; }
 
-        /// <summary>Gets the identity-preserving Avalonia selection model.</summary>
-        public IdentitySelectionModel SelectionModel { get; }
+        /// <summary>Gets the grid selection model, which identifies rows by their stable key.</summary>
+        public DataGridSelectionModel<TItem> SelectionModel { get; }
 
         /// <summary>Gets whether a stable current-item key is retained.</summary>
         public bool HasCurrentKey => _hasCurrentKey;
@@ -198,7 +195,6 @@ namespace Avalonia.Controls
 
             DataGridGeneratedCollectionViewSnapshot<TKey> snapshot = Capture();
             View.PageSize = pageSize;
-            ReplaceSelectionSource();
             ResetSelectionIndex();
             Restore(snapshot);
         }
@@ -219,7 +215,6 @@ namespace Avalonia.Controls
             DataGridGeneratedCollectionViewSnapshot<TKey> snapshot = Capture();
             DetachView(View);
             View = view;
-            ReplaceSelectionSource();
             ResetSelectionIndex();
             AttachView(View);
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(View)));
@@ -280,8 +275,6 @@ namespace Avalonia.Controls
             DetachView(View);
             SelectionModel.SelectionChanged -= OnSelectionModelChanged;
             SelectionController.SelectionChanged -= OnGeneratedSelectionChanged;
-            _selectionSourceLifetime?.Dispose();
-            _selectionSourceLifetime = null;
             _disposed = true;
         }
 
@@ -350,7 +343,7 @@ namespace Avalonia.Controls
             }
         }
 
-        private void OnSelectionModelChanged(object sender, SelectionModelSelectionChangedEventArgs e)
+        private void OnSelectionModelChanged(object sender, DataGridSelectionModelChangedEventArgs<TItem> e)
         {
             if (_synchronizingSelection)
             {
@@ -391,26 +384,6 @@ namespace Avalonia.Controls
         }
 
         private void ResetSelectionIndex() => SelectionController.ResetSource(new GlobalItems(View));
-
-        private void ReplaceSelectionSource()
-        {
-            _selectionSourceLifetime?.Dispose();
-            _selectionSource = CreateSelectionSource(View, out _selectionSourceLifetime);
-            SelectionModel.Source = _selectionSource;
-        }
-
-        private static IEnumerable CreateSelectionSource(DataGridCollectionView view, out IDisposable lifetime)
-        {
-            if (view.PageSize > 0)
-            {
-                var source = new DataGridPagedSelectionSource(view);
-                lifetime = source;
-                return source;
-            }
-
-            lifetime = null;
-            return view;
-        }
 
         private int FindGlobalIndex(TKey key)
         {

@@ -7,6 +7,7 @@ using System.Linq;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.DataGridHierarchical;
+using Avalonia.Controls.DataGridSelection;
 using Avalonia.Controls.Selection;
 using Avalonia.Controls.Primitives;
 using Avalonia.Controls.Templates;
@@ -41,7 +42,7 @@ public class HierarchicalFlyoutSelectionTests
     {
         public FolderDestinationManagerVm(Folder root)
         {
-            SelectionModel = new SelectionModel<HierarchicalNode> { SingleSelect = true };
+            SelectionModel = new DataGridSelectionModel<Folder> { SingleSelect = true };
             HierarchicalModel = new HierarchicalModel(new HierarchicalOptions
             {
                 AutoExpandRoot = true,
@@ -54,7 +55,7 @@ public class HierarchicalFlyoutSelectionTests
             HierarchicalModel.SetRoot(root);
         }
 
-        public SelectionModel<HierarchicalNode> SelectionModel { get; }
+        public DataGridSelectionModel<Folder> SelectionModel { get; }
 
         public HierarchicalModel HierarchicalModel { get; }
     }
@@ -145,7 +146,7 @@ public class HierarchicalFlyoutSelectionTests
         grid.ApplyTemplate();
         grid.UpdateLayout();
 
-        Assert.NotNull(manager.SelectionModel.Source);
+        Assert.NotNull(manager.SelectionModel.View);
 
         var pointer = new Pointer(Pointer.GetNextFreeId(), PointerType.Mouse, isPrimary: true);
         var properties = new PointerPointProperties(RawInputModifiers.LeftMouseButton, PointerUpdateKind.LeftButtonPressed);
@@ -329,7 +330,7 @@ public class HierarchicalFlyoutSelectionTests
         Dispatcher.UIThread.RunJobs();
 
         // Capture that Source is set after first open.
-        Assert.NotNull(manager.SelectionModel.Source);
+        Assert.NotNull(manager.SelectionModel.View);
 
         // Close and create a brand new flyout/grid using the same selection model (simulating sample page reopening).
         window.Close();

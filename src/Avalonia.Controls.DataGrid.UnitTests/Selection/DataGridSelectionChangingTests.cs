@@ -10,6 +10,7 @@ using System.ComponentModel;
 using System.Linq;
 using Avalonia.Collections;
 using Avalonia.Controls;
+using Avalonia.Controls.DataGridSelection;
 using Avalonia.Controls.DataGridHierarchical;
 using Avalonia.Controls.Selection;
 using Avalonia.Data;
@@ -38,9 +39,9 @@ public class DataGridSelectionChangingTests : IDisposable
     public void Programmatic_Row_Proposal_Is_Raised_Before_Commit()
     {
         ObservableCollection<string> items = new() { "A", "B", "C" };
-        SelectionModel<string> model = new() { SingleSelect = false };
+        DataGridSelectionModel<string> model = new() { SingleSelect = false };
         DataGrid grid = CreateGrid(items, model);
-        model.Select(0);
+        model.SelectAt(0);
         grid.UpdateLayout();
         DataGridSelectionChangingEventArgs? observed = null;
         bool selectionChangedDuringPreview = true;
@@ -325,9 +326,9 @@ public class DataGridSelectionChangingTests : IDisposable
     public void SelectionModel_Cancellation_Restores_Model_And_Grid_Atomically()
     {
         ObservableCollection<string> items = new() { "A", "B", "C" };
-        SelectionModel<string> model = new() { SingleSelect = false };
+        DataGridSelectionModel<string> model = new() { SingleSelect = false };
         DataGrid grid = CreateGrid(items, model);
-        model.Select(0);
+        model.SelectAt(0);
         grid.UpdateLayout();
         DataGridCellInfo current = grid.CurrentCell;
         int proposals = 0;
@@ -337,7 +338,7 @@ public class DataGridSelectionChangingTests : IDisposable
             e.Cancel = true;
         };
 
-        model.Select(1);
+        model.SelectAt(1);
 
         Assert.True(proposals > 0);
         Assert.Equal(new object[] { "A" }, grid.SelectedItems.Cast<object>().ToArray());
@@ -352,9 +353,9 @@ public class DataGridSelectionChangingTests : IDisposable
         string survivor = "B";
         string remaining = "C";
         var items = new ResettableObservableCollection<string> { removed, survivor, remaining };
-        var model = new SelectionModel<string> { SingleSelect = false };
+        var model = new DataGridSelectionModel<string> { SingleSelect = false };
         DataGrid grid = CreateGrid(items, model);
-        model.Select(1);
+        model.SelectAt(1);
         grid.UpdateLayout();
         DataGridCellInfo oldCurrent = grid.CurrentCell;
         int oldAnchor = grid.AnchorSlot;
@@ -427,7 +428,7 @@ public class DataGridSelectionChangingTests : IDisposable
     }
 
     [AvaloniaFact]
-    public void ItemsSource_Replacement_Cancellation_Is_One_PostChange_Proposal_And_Restores_Survivor()
+    public void ItemsSource_Replacement_Cancellation_Is_One_PostChange_Proposal_And_Keeps_Survivor()
     {
         string survivor = "B";
         var oldItems = new ObservableCollection<string> { "A", survivor, "C" };
@@ -447,8 +448,10 @@ public class DataGridSelectionChangingTests : IDisposable
             Assert.Equal(oldCurrent, grid.CurrentCell);
             Assert.Equal(oldAnchor, grid.AnchorSlot);
             Assert.Equal(oldOffset, grid.GetVerticalOffset());
-            Assert.Equal(new object[] { survivor }, e.RemovedItems);
-            Assert.False(e.ProposedCurrentCell.IsValid);
+            // Selection is a set of items, so an item the replacement source still holds stays
+            // selected; only the current cell moves, onto that item's new row.
+            Assert.Empty(e.RemovedItems);
+            Assert.Same(survivor, e.ProposedCurrentItem);
             e.Cancel = true;
         };
 
@@ -469,10 +472,10 @@ public class DataGridSelectionChangingTests : IDisposable
         string removed = "A";
         string survivor = "B";
         var items = new ObservableCollection<string> { removed, survivor, "C" };
-        var model = new SelectionModel<string> { SingleSelect = false };
+        var model = new DataGridSelectionModel<string> { SingleSelect = false };
         DataGrid grid = CreateGrid(items, model);
-        model.Select(0);
-        model.Select(1);
+        model.SelectAt(0);
+        model.SelectAt(1);
         grid.UpdateLayout();
         DataGridColumn column = grid.ColumnsInternal[0];
         grid.SelectedCells = new ObservableCollection<DataGridCellInfo>
@@ -482,7 +485,7 @@ public class DataGridSelectionChangingTests : IDisposable
         };
         grid.SelectedCells = null!;
         grid.CurrentCell = new DataGridCellInfo(survivor, column, 1, column.Index);
-        model.Select(0);
+        model.SelectAt(0);
         grid.SetRowSelection(grid.SlotFromRowIndex(1), isSelected: true, setAnchorSlot: true);
         grid.UpdateLayout();
         Assert.Equal(new object[] { removed, survivor }, grid.SelectedItems.Cast<object>());
@@ -588,10 +591,10 @@ public class DataGridSelectionChangingTests : IDisposable
             survivingEqual,
             suffix,
         };
-        var model = new SelectionModel<EqualItem> { SingleSelect = false };
+        var model = new DataGridSelectionModel<EqualItem>(ReferenceEqualityComparer.Instance) { SingleSelect = false };
         DataGrid grid = CreateGrid(items, model);
-        model.Select(1);
-        model.Select(2);
+        model.SelectAt(1);
+        model.SelectAt(2);
         grid.UpdateLayout();
 
         DataGridColumn column = grid.ColumnsInternal[0];
@@ -605,8 +608,8 @@ public class DataGridSelectionChangingTests : IDisposable
             column,
             2,
             column.Index);
-        model.Select(1);
-        model.Select(2);
+        model.SelectAt(1);
+        model.SelectAt(2);
         grid.SetRowSelection(
             grid.SlotFromRowIndex(2),
             isSelected: true,
@@ -665,10 +668,10 @@ public class DataGridSelectionChangingTests : IDisposable
         EqualItem equalB = new("duplicate", "second");
         EqualItem suffix = new("suffix", "suffix");
         var items = new ObservableCollection<EqualItem> { prefix, equalA, equalB, suffix };
-        var model = new SelectionModel<EqualItem> { SingleSelect = false };
+        var model = new DataGridSelectionModel<EqualItem>(ReferenceEqualityComparer.Instance) { SingleSelect = false };
         DataGrid grid = CreateGrid(items, model);
-        model.Select(1);
-        model.Select(2);
+        model.SelectAt(1);
+        model.SelectAt(2);
         grid.UpdateLayout();
         Assert.Equal(new object[] { equalA, equalB }, grid.SelectedItems.Cast<object>());
 
@@ -683,7 +686,7 @@ public class DataGridSelectionChangingTests : IDisposable
         }
         else
         {
-            model.Deselect(2);
+            model.DeselectAt(2);
         }
         grid.UpdateLayout();
 
@@ -705,7 +708,7 @@ public class DataGridSelectionChangingTests : IDisposable
         EqualItem suffix = new("suffix", "suffix");
         var items = new ObservableCollection<EqualItem> { prefix, equalA, equalB, suffix };
         var view = new DataGridCollectionView(items);
-        var model = new SelectionModel<EqualItem> { SingleSelect = false };
+        var model = new DataGridSelectionModel<EqualItem>(ReferenceEqualityComparer.Instance) { SingleSelect = false };
         DataGrid grid = CreateGrid(view, model);
         SetSourceMutationSelectionState(grid, model, equalB, rowIndex: 2);
 
@@ -739,7 +742,7 @@ public class DataGridSelectionChangingTests : IDisposable
         EqualItem suffix = new("suffix", "W");
         var items = new ObservableCollection<EqualItem> { equalA, equalB, prefix, suffix };
         var view = new DataGridCollectionView(items);
-        var model = new SelectionModel<EqualItem> { SingleSelect = false };
+        var model = new DataGridSelectionModel<EqualItem>(ReferenceEqualityComparer.Instance) { SingleSelect = false };
         DataGrid grid = CreateGrid(view, model);
         grid.OwnsSortDescriptions = false;
         SetSourceMutationSelectionState(grid, model, equalB, rowIndex: 1);
@@ -775,7 +778,7 @@ public class DataGridSelectionChangingTests : IDisposable
         EqualItem equalA = new("duplicate", "other");
         var items = new ObservableCollection<EqualItem> { equalB, prefix, suffix, equalA };
         var view = new DataGridCollectionView(items);
-        var model = new SelectionModel<EqualItem> { SingleSelect = false };
+        var model = new DataGridSelectionModel<EqualItem>(ReferenceEqualityComparer.Instance) { SingleSelect = false };
         DataGrid grid = CreateGrid(view, model);
         SetSourceMutationSelectionState(grid, model, equalB, rowIndex: 0);
 
@@ -818,7 +821,7 @@ public class DataGridSelectionChangingTests : IDisposable
         var items = new ObservableCollection<EqualItem> { removed, before, beforePage, selected, tail };
         var view = new DataGridCollectionView(items) { PageSize = 2 };
         Assert.True(view.MoveToPage(1));
-        var model = new SelectionModel<EqualItem> { SingleSelect = false };
+        var model = new DataGridSelectionModel<EqualItem>(ReferenceEqualityComparer.Instance) { SingleSelect = false };
         DataGrid grid = CreateGrid(view, model);
         SetSourceMutationSelectionState(grid, model, selected, rowIndex: 1, selectionIndex: 3);
 
@@ -863,7 +866,7 @@ public class DataGridSelectionChangingTests : IDisposable
         };
         items.CollectionChanged += (_, _) => events.Add("source.collection-changed");
         var view = new DataGridCollectionView(items);
-        var model = new SelectionModel<EqualItem> { SingleSelect = false };
+        var model = new DataGridSelectionModel<EqualItem>(ReferenceEqualityComparer.Instance) { SingleSelect = false };
         DataGrid grid = CreateGrid(view, model);
         grid.OwnsSortDescriptions = false;
         view.SortDescriptions.Add(
@@ -873,13 +876,13 @@ public class DataGridSelectionChangingTests : IDisposable
         SetSourceMutationSelectionState(grid, model, current, rowIndex: 2);
         if (removeCurrent)
         {
-            model.Select(1);
-            model.Select(2);
+            model.SelectAt(1);
+            model.SelectAt(2);
             grid.UpdateLayout();
             DataGridColumn column = grid.ColumnsInternal[0];
             grid.CurrentCell = new DataGridCellInfo(current, column, 2, column.Index);
-            model.Select(1);
-            model.Select(2);
+            model.SelectAt(1);
+            model.SelectAt(2);
             grid.SetRowSelection(grid.SlotFromRowIndex(2), isSelected: true, setAnchorSlot: true);
             view.MoveCurrentToPosition(2);
             grid.UpdateLayout();
@@ -1155,14 +1158,14 @@ public class DataGridSelectionChangingTests : IDisposable
         _windows.Clear();
     }
 
-    private DataGrid CreateGrid<T>(IEnumerable<T> items, SelectionModel<T>? selection = null)
+    private DataGrid CreateGrid<T>(IEnumerable<T> items, DataGridSelectionModel<T>? selection = null)
     {
-        ISelectionModel resolvedSelection =
-            selection ?? new SelectionModel<T> { SingleSelect = false };
+        DataGridSelectionModel resolvedSelection =
+            selection ?? new DataGridSelectionModel<T> { SingleSelect = false };
         return CreateGrid((IEnumerable)items, resolvedSelection);
     }
 
-    private DataGrid CreateGrid(IEnumerable items, ISelectionModel selection)
+    private DataGrid CreateGrid(IEnumerable items, DataGridSelectionModel selection)
     {
         Window root = new()
         {
@@ -1192,13 +1195,13 @@ public class DataGridSelectionChangingTests : IDisposable
 
     private static void SetSourceMutationSelectionState(
         DataGrid grid,
-        SelectionModel<EqualItem> model,
+        DataGridSelectionModel<EqualItem> model,
         EqualItem item,
         int rowIndex,
         int? selectionIndex = null)
     {
         int modelIndex = selectionIndex ?? rowIndex;
-        model.Select(modelIndex);
+        model.SelectAt(modelIndex);
         grid.UpdateLayout();
         DataGridColumn column = grid.ColumnsInternal[0];
         grid.SelectedCells = new ObservableCollection<DataGridCellInfo>
@@ -1207,7 +1210,7 @@ public class DataGridSelectionChangingTests : IDisposable
         };
         grid.SelectedCells = null!;
         grid.CurrentCell = new DataGridCellInfo(item, column, rowIndex, column.Index);
-        model.Select(modelIndex);
+        model.SelectAt(modelIndex);
         grid.SetRowSelection(grid.SlotFromRowIndex(rowIndex), isSelected: true, setAnchorSlot: true);
         grid.DataConnection.CollectionView!.MoveCurrentToPosition(rowIndex);
         grid.UpdateLayout();
@@ -1215,7 +1218,7 @@ public class DataGridSelectionChangingTests : IDisposable
 
     private static void AssertSourceMutationSelectionState(
         DataGrid grid,
-        SelectionModel<EqualItem> model,
+        DataGridSelectionModel<EqualItem> model,
         EqualItem item,
         int rowIndex,
         int selectionIndex)

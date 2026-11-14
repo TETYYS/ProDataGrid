@@ -73,6 +73,81 @@ namespace Avalonia.Controls.DataGridHierarchical
             return buffer;
         }
 
+        /// <summary>
+        /// Relocates a run of <paramref name="count"/> items so that it starts at
+        /// <paramref name="newIndex"/>, as a single move.
+        /// </summary>
+        /// <param name="oldIndex">Where the run starts now.</param>
+        /// <param name="newIndex">Where it starts once it has been moved, in the resulting list.</param>
+        /// <param name="count">How many items travel together.</param>
+        /// <remarks>
+        /// <para>
+        /// Relocating a run is a rotation of the span it travels over, so it is done as one: nothing
+        /// leaves the collection and nothing joins it, and a single <see cref="NotifyCollectionChangedAction.Move"/>
+        /// says so. Taking the items out and putting them back would end in the same arrangement but
+        /// would tell every consumer that those items were removed and different ones added, which is
+        /// not what happened and costs anything keyed on the items - selection, scroll anchoring,
+        /// row containers - the thing it was keyed on.
+        /// </para>
+        /// <para>
+        /// <paramref name="newIndex"/> follows the convention of
+        /// <see cref="System.Collections.ObjectModel.ObservableCollection{T}.Move"/>: it is the index
+        /// the run occupies afterwards, not the index it would be inserted at while the run is still
+        /// in its old place.
+        /// </para>
+        /// </remarks>
+        public void MoveRange(int oldIndex, int newIndex, int count)
+        {
+            // Checked before the shortcuts below, so that a run that does not fit is rejected
+            // whether or not it would have moved anywhere.
+            if (count < 0 || oldIndex < 0 || newIndex < 0 || oldIndex + count > Count || newIndex + count > Count)
+            {
+                throw new ArgumentOutOfRangeException();
+            }
+
+            if (count == 0 || oldIndex == newIndex)
+            {
+                return;
+            }
+
+            CheckReentrancy();
+
+            var moved = new List<T>(count);
+            for (var i = 0; i < count; i++)
+            {
+                moved.Add(Items[oldIndex + i]);
+            }
+
+            if (newIndex > oldIndex)
+            {
+                // Everything between the run's old end and its new end slides back over it.
+                for (var i = 0; i < newIndex - oldIndex; i++)
+                {
+                    Items[oldIndex + i] = Items[oldIndex + count + i];
+                }
+            }
+            else
+            {
+                // Same, the other way: walking backwards keeps each read ahead of its overwrite.
+                for (var i = oldIndex - newIndex - 1; i >= 0; i--)
+                {
+                    Items[newIndex + count + i] = Items[newIndex + i];
+                }
+            }
+
+            for (var i = 0; i < count; i++)
+            {
+                Items[newIndex + i] = moved[i];
+            }
+
+            OnPropertyChanged(new PropertyChangedEventArgs("Item[]"));
+            OnCollectionChanged(new NotifyCollectionChangedEventArgs(
+                NotifyCollectionChangedAction.Move,
+                (IList)moved,
+                newIndex,
+                oldIndex));
+        }
+
         public void RemoveRange(int index, int count)
         {
             if (count <= 0)

@@ -482,12 +482,12 @@ internal
 
         private void DeselectRowsOutsideRange(int startSlot, int endSlot)
         {
-            if (_selectedItems.Count == 0)
+            if (_selectionModel.Count == 0)
             {
                 return;
             }
 
-            var selectedSlots = _selectedItems.GetIndexes().ToList();
+            var selectedSlots = GetSelectedSlots().ToList();
             foreach (var slot in selectedSlots)
             {
                 if (slot < startSlot || slot > endSlot)
@@ -499,12 +499,12 @@ internal
 
         private void DeselectRowsInRange(int startSlot, int endSlot)
         {
-            if (_selectedItems.Count == 0 || startSlot > endSlot)
+            if (_selectionModel.Count == 0 || startSlot > endSlot)
             {
                 return;
             }
 
-            var selectedSlots = _selectedItems.GetIndexes().ToList();
+            var selectedSlots = GetSelectedSlots().ToList();
             foreach (var slot in selectedSlots)
             {
                 if (slot >= startSlot && slot <= endSlot)
@@ -957,6 +957,8 @@ internal
             {
                 return;
             }
+
+            using var columnsDelta = BeginSelectedColumnsDelta();
 
             var added = new List<DataGridCellInfo>();
             var removed = new List<DataGridCellInfo>();

@@ -437,7 +437,7 @@ namespace Avalonia.Controls
 
             var identityMap = new ProspectiveIdentityMap(prospectiveRows, requestedIdentities);
             var oldSelectedRowIndexes = new List<int>();
-            foreach (int selectedSlot in _selectedItems.GetIndexes())
+            foreach (int selectedSlot in GetSelectedSlots())
             {
                 if (selectedSlot >= 0 && selectedSlot < SlotCount && !IsGroupSlot(selectedSlot))
                 {
@@ -703,6 +703,10 @@ namespace Avalonia.Controls
                 _builtInSourceMutationPreflightActive = false;
                 DisposeBuiltInSourceMutationScopes();
             }
+
+            // The column selection was left alone while the mutation was pending. Rows may have come
+            // or gone under it, so a column can have become fully selected, or stopped being.
+            RefreshSelectedColumnsFromCounts();
         }
 
         private void DisposeBuiltInSourceMutationScopes()
@@ -845,102 +849,17 @@ namespace Avalonia.Controls
         private void RestoreItemsSourceSelectionRows(
             IReadOnlyList<ItemsSourceSelectionRow> selectedRows)
         {
-            if (_selectionModelAdapter == null || selectedRows == null)
+            if (_selectionModel == null || selectedRows == null)
             {
                 return;
             }
 
-            bool previousSync = _syncingSelectionModel;
-            _syncingSelectionModel = true;
-            try
-            {
-                int firstSelectionIndex = -1;
-                ISelectionModel selectionModel = _selectionModelAdapter.Model;
-                IEnumerable selectionSource = selectionModel.Source;
-                bool detachGroupedSource =
-                    DataConnection?.CollectionView?.IsGrouping == true && selectionSource != null;
-                if (detachGroupedSource)
-                {
-                    selectionModel.Source = null;
-                }
-
-                try
-                {
-                    using (_selectionModelAdapter.SelectedItemsView.SuppressNotifications())
-                    using (selectionModel.BatchUpdate())
-                    {
-                        selectionModel.Clear();
-                        for (int i = 0; i < selectedRows.Count; i++)
-                        {
-                            int rowIndex = selectedRows[i].RowIndex;
-                            if (rowIndex < 0 || rowIndex >= (DataConnection?.Count ?? 0))
-                            {
-                                continue;
-                            }
-
-                            int selectionIndex = GetSelectionIndexFromRowIndex(rowIndex);
-                            if (selectionIndex < 0)
-                            {
-                                continue;
-                            }
-
-                            if (firstSelectionIndex < 0)
-                            {
-                                firstSelectionIndex = selectionIndex;
-                            }
-                            _selectionModelAdapter.Select(selectionIndex);
-                        }
-                    }
-                }
-                finally
-                {
-                    if (detachGroupedSource)
-                    {
-                        selectionModel.Source = selectionSource;
-                    }
-                }
-
-                // Some SelectionModel implementations publish the final source Reset as their
-                // outer batch closes. Reassert any missing final indexes after that boundary,
-                // while grid callbacks and SelectedItems notifications remain suppressed.
-                using (_selectionModelAdapter.SelectedItemsView.SuppressNotifications())
-                {
-                    for (int i = 0; i < selectedRows.Count; i++)
-                    {
-                        int rowIndex = selectedRows[i].RowIndex;
-                        if (rowIndex < 0 || rowIndex >= (DataConnection?.Count ?? 0))
-                        {
-                            continue;
-                        }
-
-                        int selectionIndex = GetSelectionIndexFromRowIndex(rowIndex);
-                        if (selectionIndex >= 0 && !_selectionModelAdapter.IsSelected(selectionIndex))
-                        {
-                            _selectionModelAdapter.Select(selectionIndex);
-                        }
-                    }
-                }
-
-                _preferredSelectionIndex = firstSelectionIndex;
-                ApplySelectionFromSelectionModel();
-                if (selectedRows.Count > 0)
-                {
-                    int firstRowIndex = selectedRows[0].RowIndex;
-                    if (firstRowIndex >= 0 && firstRowIndex < (DataConnection?.Count ?? 0))
-                    {
-                        SetValueNoCallback(
-                            SelectedItemProperty,
-                            ProjectSelectionItem(DataConnection.GetDataItem(firstRowIndex)));
-                        SetValueNoCallback(
-                            SelectedIndexProperty,
-                            GetSelectionIndexFromRowIndex(firstRowIndex));
-                    }
-                }
-            }
-            finally
-            {
-                _syncingSelectionModel = previousSync;
-            }
+            // The selection is a set of items and came through the mutation intact. The rows the
+            // transaction resolved only say which selected items the view still shows, and an item
+            // the view hides - filtered out, on another page, under a collapsed parent - is still
+            // selected. Only items the underlying data no longer holds are dropped.
+            DropSelectionForRemovedItems();
+            RefreshSelectionFromModel();
         }
 
         private List<ItemsSourceSelectionCell> CaptureItemsSourceSelectionCells()
@@ -998,7 +917,7 @@ namespace Avalonia.Controls
                 if (selectionSnapshot != null)
                 {
                     var oldRows = new List<int>();
-                    foreach (int selectedSlot in _selectedItems.GetIndexes())
+                    foreach (int selectedSlot in GetSelectedSlots())
                     {
                         if (selectedSlot >= 0 && selectedSlot < SlotCount && !IsGroupSlot(selectedSlot))
                         {
@@ -1187,51 +1106,6 @@ namespace Avalonia.Controls
                 Array.Empty<DataGridColumn>(),
                 proposedCurrentCell,
                 proposedAnchor);
-        }
-
-        private bool TryPreviewSelectionModelSelection()
-        {
-            if (!HasSelectionChangingHandlers || _selectionCommitDepth > 0)
-            {
-                return true;
-            }
-
-            var proposedRows = new HashSet<int>();
-            int preferredSelectionIndex = _preferredSelectionIndex >= 0
-                ? _preferredSelectionIndex
-                : _selectionModelAdapter?.Model.SelectedIndex ?? -1;
-            int proposedSlot = -1;
-            IReadOnlyList<int> selectedIndexes = _selectionModelAdapter?.Model.SelectedIndexes;
-            if (selectedIndexes != null)
-            {
-                for (int i = 0; i < selectedIndexes.Count; i++)
-                {
-                    int selectionIndex = selectedIndexes[i];
-                    int slot = SlotFromSelectionIndex(selectionIndex);
-                    if (slot < 0 || slot >= SlotCount || IsGroupSlot(slot))
-                    {
-                        continue;
-                    }
-
-                    int rowIndex = RowIndexFromSlot(slot);
-                    if (rowIndex >= 0)
-                    {
-                        proposedRows.Add(rowIndex);
-                        if (proposedSlot < 0 || selectionIndex == preferredSelectionIndex)
-                        {
-                            proposedSlot = slot;
-                        }
-                    }
-                }
-            }
-
-            int columnIndex = CurrentColumnIndex >= 0
-                ? CurrentColumnIndex
-                : FirstDisplayedNonFillerColumnIndex;
-            return TryPreviewRowSet(
-                proposedRows,
-                CreateCellInfo(columnIndex, proposedSlot),
-                CreateAnchorInfo(proposedSlot, columnIndex));
         }
 
         private bool TryPreviewCurrentCell(DataGridCellInfo proposedCurrentCell)
@@ -1840,7 +1714,7 @@ namespace Avalonia.Controls
                 return result;
             }
 
-            foreach (int slot in _selectedItems.GetIndexes())
+            foreach (int slot in GetSelectedSlots())
             {
                 if (slot >= 0 && slot < SlotCount && !IsGroupSlot(slot))
                 {
@@ -2281,20 +2155,32 @@ namespace Avalonia.Controls
                 _owner._itemsSourceMutationOldSelectedItem = null;
                 _owner._itemsSourceMutationOldCurrentCell = DataGridCellInfo.Unset;
 
-                if (!Equals(oldSelectedItem, _owner._selectedItem))
+                // These report state the mutation already applied, so the grid's own property
+                // handlers must not take them for new assignments: SelectedIndex dropping to -1
+                // because the selected item is hidden by a filter is not a request to deselect it.
+                bool previousHandlersSuspended = _owner._areHandlersSuspended;
+                _owner._areHandlersSuspended = true;
+                try
                 {
-                    _owner.RaisePropertyChanged(SelectedItemProperty, oldSelectedItem, _owner._selectedItem);
+                    if (!Equals(oldSelectedItem, _owner._selectedItem))
+                    {
+                        _owner.RaisePropertyChanged(SelectedItemProperty, oldSelectedItem, _owner._selectedItem);
+                    }
+                    if (oldSelectedIndex != _owner._selectedIndex)
+                    {
+                        _owner.RaisePropertyChanged(SelectedIndexProperty, oldSelectedIndex, _owner._selectedIndex);
+                    }
+                    if (oldCurrentCell.RowIndex != _owner._currentCell.RowIndex ||
+                        oldCurrentCell.ColumnIndex != _owner._currentCell.ColumnIndex ||
+                        oldCurrentCell.IsValid != _owner._currentCell.IsValid ||
+                        !oldCurrentCell.Equals(_owner._currentCell))
+                    {
+                        _owner.RaisePropertyChanged(CurrentCellProperty, oldCurrentCell, _owner._currentCell);
+                    }
                 }
-                if (oldSelectedIndex != _owner._selectedIndex)
+                finally
                 {
-                    _owner.RaisePropertyChanged(SelectedIndexProperty, oldSelectedIndex, _owner._selectedIndex);
-                }
-                if (oldCurrentCell.RowIndex != _owner._currentCell.RowIndex ||
-                    oldCurrentCell.ColumnIndex != _owner._currentCell.ColumnIndex ||
-                    oldCurrentCell.IsValid != _owner._currentCell.IsValid ||
-                    !oldCurrentCell.Equals(_owner._currentCell))
-                {
-                    _owner.RaisePropertyChanged(CurrentCellProperty, oldCurrentCell, _owner._currentCell);
+                    _owner._areHandlersSuspended = previousHandlersSuspended;
                 }
             }
         }

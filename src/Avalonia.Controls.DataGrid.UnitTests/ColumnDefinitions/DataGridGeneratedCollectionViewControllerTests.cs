@@ -74,7 +74,7 @@ public sealed class DataGridGeneratedCollectionViewControllerTests
         using var controller = new DataGridGeneratedCollectionViewController<Row, int>(view, new RowKey());
         Assert.True(view.MoveToPage(1));
         Assert.True(view.MoveCurrentTo(rows[3]));
-        controller.SelectionModel.Select(3);
+        controller.SelectionModel.Select(rows[3]);
 
         Assert.Equal(4, controller.CurrentKey);
         Assert.Equal(new[] { 4 }, controller.SelectionController.SelectedItemKeys);

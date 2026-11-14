@@ -257,9 +257,9 @@ namespace Avalonia.Controls
             var selectedItems = new List<object>();
             var selectedIndexes = new List<int>();
 
-            if (_selectionModelAdapter != null)
+            if (_selectionModel != null)
             {
-                foreach (var item in _selectionModelAdapter.SelectedItemsView.Cast<object>())
+                foreach (var item in _selectionModel.SelectedItems)
                 {
                     selectedItems.Add(GetItemKey(item, options));
                     var index = GetSelectionModelIndexOfItem(item);
@@ -345,54 +345,45 @@ namespace Avalonia.Controls
             SelectionMode = state.SelectionMode;
             SelectionUnit = state.SelectionUnit;
 
-            var selectionModelAvailable = _selectionModelAdapter != null;
+            var selectionModelAvailable = _selectionModel != null;
             if (selectionModelAvailable)
             {
                 using var _ = BeginSelectionChangeScope(DataGridSelectionChangeSource.Programmatic);
-                var previousSync = PushSelectionSync();
-                try
+                using (_selectionModel.BatchUpdate())
                 {
-                    using (_selectionModelAdapter.Model.BatchUpdate())
+                    _selectionModel.Clear();
+
+                    var anySelected = false;
+                    if (state.SelectedItemKeys != null)
                     {
-                        _selectionModelAdapter.Clear();
-
-                        var anySelected = false;
-                        if (state.SelectedItemKeys != null)
+                        foreach (var key in state.SelectedItemKeys)
                         {
-                            foreach (var key in state.SelectedItemKeys)
+                            if (!TryResolveItemKey(key, options, out var item))
                             {
-                                if (!TryResolveItemKey(key, options, out var item))
-                                {
-                                    continue;
-                                }
-
-                                var index = GetSelectionModelIndexOfItem(item);
-                                if (index >= 0)
-                                {
-                                    _selectionModelAdapter.Select(index);
-                                    anySelected = true;
-                                }
+                                continue;
                             }
-                        }
 
-                        if (!anySelected && state.SelectedIndexes != null)
+                            _selectionModel.Select(item);
+                            anySelected = true;
+                        }
+                    }
+
+                    // Positions need rows to count, and state can be restored before ItemsSource is
+                    // assigned. Saved indexes are then simply not restorable - skipped, like any key
+                    // above that would not resolve, rather than asked for and thrown at.
+                    if (!anySelected && state.SelectedIndexes != null && _selectionModel.View != null)
+                    {
+                        foreach (var index in state.SelectedIndexes)
                         {
-                            foreach (var index in state.SelectedIndexes)
+                            if (index >= 0)
                             {
-                                if (index >= 0)
-                                {
-                                    _selectionModelAdapter.Select(index);
-                                }
+                                _selectionModel.SelectAt(index);
                             }
                         }
                     }
                 }
-                finally
-                {
-                    PopSelectionSync(previousSync);
-                }
 
-                ApplySelectionFromSelectionModel();
+                RefreshSelectionFromModel();
             }
 
             if (state.SelectedCells != null)
@@ -405,10 +396,6 @@ namespace Avalonia.Controls
                 RestoreCurrentCellFromState(state.CurrentCell, options);
             }
 
-            if (selectionModelAvailable)
-            {
-                UpdateSelectionSnapshot();
-            }
         }
 
         public DataGridScrollState CaptureScrollState(DataGridStateOptions options = null)
@@ -1025,6 +1012,7 @@ namespace Avalonia.Controls
             List<DataGridCellInfo> list = BuildSelectedCellsFromState(cells, options);
 
             using var _ = BeginSelectionChangeScope(DataGridSelectionChangeSource.Programmatic);
+            using var columnsDelta = BeginSelectedColumnsDelta();
             var previousSync = _syncingSelectedCells;
             _syncingSelectedCells = true;
             try

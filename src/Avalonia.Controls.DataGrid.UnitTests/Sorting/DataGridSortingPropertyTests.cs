@@ -101,7 +101,11 @@ public class DataGridSortingPropertyTests
         Assert.Same(selected, grid.SelectedItem);
         Assert.Contains(selected, grid.SelectedItems.Cast<object>());
         Assert.Equal(1, grid.SelectedIndex);
-        Assert.Equal(1, grid.Selection.SelectedIndex);
+
+        // The selection model indexes into DataGridSelectionSource, which deliberately does not
+        // follow moves (see Move_Does_Not_Report_Selected_Item_As_Deselected), so its index still
+        // refers to the pre-reorder position. What must hold is that it still means the same item.
+        Assert.Same(selected, grid.Selection.SelectedItem);
     }
 
     [AvaloniaFact]

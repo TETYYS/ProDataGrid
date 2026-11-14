@@ -751,20 +751,33 @@ namespace Avalonia.Collections
 
             if (args.Action == NotifyCollectionChangedAction.Move)
             {
-                if (IsUsingSourceList && (args.OldStartingIndex < 0 || args.NewStartingIndex < 0))
+                if (args.OldStartingIndex < 0 || args.NewStartingIndex < 0)
                 {
                     RefreshOrDefer();
                     return;
                 }
 
-                if (args.OldItems != null)
+                if (args.OldItems is { Count: 1 })
                 {
-                    for (var i = 0; i < args.OldItems.Count; i++)
-                    {
-                        ProcessMoveEvent(args.OldItems[i], args.OldStartingIndex + i, args.NewStartingIndex + i);
-                    }
+                    ProcessMoveEvent(args.OldItems[0], args.OldStartingIndex, args.NewStartingIndex);
+                }
+                else if (args.OldItems is { Count: > 1 })
+                {
+                    ProcessMoveRangeEvent(args.OldItems, args.OldStartingIndex, args.NewStartingIndex);
+                }
+                else
+                {
+                    RefreshOrDefer();
                 }
 
+                return;
+            }
+
+            if (args.Action == NotifyCollectionChangedAction.Replace &&
+                args.OldItems != null &&
+                args.NewItems != null &&
+                ProcessReplaceEvent(args.OldItems, args.NewItems, args.OldStartingIndex))
+            {
                 return;
             }
 
@@ -818,6 +831,236 @@ namespace Avalonia.Collections
             if (args.Action != NotifyCollectionChangedAction.Replace)
             {
                 OnPropertyChanged(nameof(ItemCount));
+            }
+        }
+
+        /// <summary>
+        /// Process a Replace operation from an INotifyCollectionChanged event handler, keeping it a
+        /// replacement instead of splitting it into a removal and an insertion.
+        /// </summary>
+        /// <param name="oldItems">The items that gave up their positions.</param>
+        /// <param name="newItems">The items that took them, paired off in order.</param>
+        /// <param name="startingIndex">Where the run of replaced items starts.</param>
+        /// <returns>
+        /// False when the view cannot honestly report it as one replacement, in which case the
+        /// caller falls back to the remove-then-add path.
+        /// </returns>
+        /// <remarks>
+        /// The old path always split a Replace into per-item removes and adds - it even carried an
+        /// isReplace flag through <see cref="ProcessRemoveEvent"/> to patch up the differences,
+        /// which is the tell. Consumers were told the item had been taken away and an unrelated one
+        /// put there, so anything keyed on the item lost its hold on the row: selection above all.
+        /// </remarks>
+        private bool ProcessReplaceEvent(IList oldItems, IList newItems, int startingIndex)
+        {
+            if (oldItems.Count == 0 || oldItems.Count != newItems.Count)
+            {
+                return false;
+            }
+
+            // A filter can admit one of the pair and not the other, and grouping and paging can
+            // drop them in different buckets. In those cases it genuinely is a removal and an
+            // insertion.
+            if (GroupDescriptions.Count > 0 || Filter != null || PageSize > 0)
+            {
+                return false;
+            }
+
+            if (SortDescriptions.Count > 0)
+            {
+                // Sorted order comes from the comparer, so the replacement may not belong where the
+                // replaced item stood. Still a replacement - just one that may have to move
+                // afterwards. Source indexes mean nothing here, so the pairing has to be resolved
+                // item by item and only a single replacement is worth untangling.
+                return oldItems.Count == 1 && ProcessSortedReplaceEvent(oldItems[0], newItems[0]);
+            }
+
+            if (startingIndex < 0)
+            {
+                return false;
+            }
+
+            if (startingIndex + oldItems.Count > _internalList.Count)
+            {
+                return false;
+            }
+
+            if (IsUsingSourceList)
+            {
+                // The storage is the source collection, so it already holds the replacements.
+                for (var i = 0; i < newItems.Count; i++)
+                {
+                    if (!Equals(_internalList[startingIndex + i], newItems[i]))
+                    {
+                        return false;
+                    }
+                }
+            }
+            else
+            {
+                for (var i = 0; i < oldItems.Count; i++)
+                {
+                    if (!Equals(_internalList[startingIndex + i], oldItems[i]))
+                    {
+                        // The view is not laid out the way the notification says it is.
+                        return false;
+                    }
+                }
+
+                for (var i = 0; i < newItems.Count; i++)
+                {
+                    _internalList[startingIndex + i] = newItems[i];
+                }
+            }
+
+            object oldCurrentItem = _currentItem;
+            int oldCurrentPosition = CurrentPosition;
+            bool oldIsCurrentBeforeFirst = IsCurrentBeforeFirst;
+            bool oldIsCurrentAfterLast = IsCurrentAfterLast;
+
+            // Currency is a position and the positions are untouched, but whoever is standing at the
+            // current one may just have been swapped out from under it.
+            if (oldCurrentPosition >= startingIndex && oldCurrentPosition < startingIndex + newItems.Count)
+            {
+                SetCurrent(newItems[oldCurrentPosition - startingIndex], oldCurrentPosition);
+            }
+
+            OnCollectionChanged(
+                new NotifyCollectionChangedEventArgs(
+                    NotifyCollectionChangedAction.Replace,
+                    newItems,
+                    oldItems,
+                    startingIndex));
+
+            RaiseCurrencyChanges(false, oldCurrentItem, oldCurrentPosition, oldIsCurrentBeforeFirst, oldIsCurrentAfterLast);
+            return true;
+        }
+
+        /// <summary>
+        /// Replaces a single item while a sort is in force, repositioning the replacement when its
+        /// sort key belongs somewhere other than where the replaced item stood.
+        /// </summary>
+        /// <remarks>
+        /// Sorting is evaluated when an item is inserted, so it has to be evaluated here too. What
+        /// it must not turn into is a removal and an insertion: a replacement followed by a move
+        /// says exactly what happened and leaves the row - and anything keyed on it - intact, where
+        /// remove-then-add reports the item as having left the collection.
+        /// </remarks>
+        private bool ProcessSortedReplaceEvent(object oldItem, object newItem)
+        {
+            var viewIndex = InternalIndexOf(oldItem);
+            if (viewIndex < 0)
+            {
+                return false;
+            }
+
+            var itemType = ItemType;
+            foreach (var sort in SortDescriptions)
+            {
+                sort.Initialize(itemType);
+            }
+
+            var comparer = new MergedComparer(this);
+
+            object oldCurrentItem = _currentItem;
+            int oldCurrentPosition = CurrentPosition;
+            bool oldIsCurrentBeforeFirst = IsCurrentBeforeFirst;
+            bool oldIsCurrentAfterLast = IsCurrentAfterLast;
+
+            _internalList[viewIndex] = newItem;
+
+            if (oldCurrentPosition == viewIndex)
+            {
+                SetCurrent(newItem, viewIndex);
+            }
+
+            OnCollectionChanged(
+                new NotifyCollectionChangedEventArgs(
+                    NotifyCollectionChangedAction.Replace,
+                    newItem,
+                    oldItem,
+                    viewIndex));
+
+            // Where the sort puts it among the others. The rest of the list is in order, so the
+            // run of items that belong ahead of it ends at the first one that does not.
+            var target = 0;
+            for (var i = 0; i < _internalList.Count; i++)
+            {
+                if (i == viewIndex)
+                {
+                    continue;
+                }
+
+                if (comparer.Compare(_internalList[i], newItem) > 0)
+                {
+                    break;
+                }
+
+                target++;
+            }
+
+            if (target != viewIndex)
+            {
+                RotateInternalList(viewIndex, target, 1);
+
+                if (CurrentPosition == viewIndex)
+                {
+                    SetCurrent(newItem, target);
+                }
+                else
+                {
+                    // The rotation slid every item between the two indices along, and whoever was
+                    // current may have been one of them. Currency is on an item, so the position
+                    // has to follow it rather than stay where it was.
+                    AdjustCurrencyForMove(oldCurrentItem);
+                }
+
+                OnCollectionChanged(
+                    new NotifyCollectionChangedEventArgs(
+                        NotifyCollectionChangedAction.Move,
+                        newItem,
+                        target,
+                        viewIndex));
+            }
+
+            RaiseCurrencyChanges(false, oldCurrentItem, oldCurrentPosition, oldIsCurrentBeforeFirst, oldIsCurrentAfterLast);
+            return true;
+        }
+
+        /// <summary>
+        /// Relocates a run within <see cref="_internalList"/> by rotating the span it travels over.
+        /// </summary>
+        private void RotateInternalList(int oldIndex, int newIndex, int count)
+        {
+            if (count <= 0 || oldIndex == newIndex)
+            {
+                return;
+            }
+
+            var moved = new object[count];
+            for (var i = 0; i < count; i++)
+            {
+                moved[i] = _internalList[oldIndex + i];
+            }
+
+            if (newIndex > oldIndex)
+            {
+                for (var i = 0; i < newIndex - oldIndex; i++)
+                {
+                    _internalList[oldIndex + i] = _internalList[oldIndex + count + i];
+                }
+            }
+            else
+            {
+                for (var i = oldIndex - newIndex - 1; i >= 0; i--)
+                {
+                    _internalList[newIndex + count + i] = _internalList[newIndex + i];
+                }
+            }
+
+            for (var i = 0; i < count; i++)
+            {
+                _internalList[newIndex + i] = moved[i];
             }
         }
 
@@ -992,34 +1235,245 @@ namespace Avalonia.Collections
 
         /// <summary>
         /// Process a Move operation from an INotifyCollectionChanged event handler.
-        /// Moves are handled as a remove followed by an add so existing paging
-        /// and grouping logic can update correctly.
         /// </summary>
         /// <param name="movedItem">Item moved in the source collection.</param>
         /// <param name="oldIndex">Original index in the source collection.</param>
         /// <param name="newIndex">New index in the source collection.</param>
         private void ProcessMoveEvent(object movedItem, int oldIndex, int newIndex)
         {
-            _ = oldIndex;
+            if (oldIndex == newIndex)
+            {
+                return;
+            }
+
+            if (IsUsingSourceList)
+            {
+                ProcessMoveEventUsingSourceList(movedItem, oldIndex, newIndex);
+                return;
+            }
+
+            if (SortDescriptions.Count > 0)
+            {
+                // Sorted order comes from the comparer, and a move changes no item's sort key, so
+                // the view is already showing the right thing - including any grouping or paging
+                // derived from it. This used to refresh, which told consumers the whole collection
+                // had been replaced in answer to a change that moved nothing they could see.
+                return;
+            }
+
+            if (GroupDescriptions.Count > 0 || PageSize > 0)
+            {
+                RefreshOrDefer();
+                return;
+            }
+
+            ProcessMoveEventUsingLocalArray(movedItem, newIndex);
+        }
+
+        /// <summary>
+        /// Process a Move of a run of items from an INotifyCollectionChanged event handler.
+        /// </summary>
+        /// <param name="movedItems">The items that travelled together, in order.</param>
+        /// <param name="oldIndex">Where the run started in the source collection.</param>
+        /// <param name="newIndex">Where it starts in the source collection now.</param>
+        /// <remarks>
+        /// A run relocating is one move, and it is reported as one. It used to fall through to a
+        /// full refresh, which told every consumer the whole collection had been replaced - the
+        /// caller had gone to the trouble of saying precisely what happened and the view threw that
+        /// away. A hierarchical row with expanded children moves as a run, so this was the ordinary
+        /// case, not a corner of one.
+        /// </remarks>
+        private void ProcessMoveRangeEvent(IList movedItems, int oldIndex, int newIndex)
+        {
+            if (oldIndex == newIndex || movedItems.Count == 0)
+            {
+                return;
+            }
+
+            if (!IsUsingSourceList)
+            {
+                if (SortDescriptions.Count > 0)
+                {
+                    // As with a single item: sorted order comes from the comparer and a move
+                    // changes no sort key, so there is nothing for the view to do.
+                    return;
+                }
+
+                // Grouping, filtering and paging break the correspondence between source order and
+                // view order, so a run that is contiguous at the source need not be contiguous -
+                // or even present - here. Those stay a refresh.
+                if (Filter != null || GroupDescriptions.Count > 0 || PageSize > 0)
+                {
+                    RefreshOrDefer();
+                    return;
+                }
+
+                if (oldIndex + movedItems.Count > _internalList.Count ||
+                    newIndex + movedItems.Count > _internalList.Count)
+                {
+                    RefreshOrDefer();
+                    return;
+                }
+            }
+
             object oldCurrentItem = CurrentItem;
+            int oldCurrentPosition = CurrentPosition;
             bool oldIsCurrentBeforeFirst = IsCurrentBeforeFirst;
             bool oldIsCurrentAfterLast = IsCurrentAfterLast;
 
-            // Treat move as replace to avoid paging side effects when removing.
-            ProcessRemoveEvent(movedItem, isReplace: true, oldIndexHint: oldIndex);
-            ProcessAddEvent(movedItem, newIndex);
+            if (!IsUsingSourceList)
+            {
+                // View order tracks source order here, so the same rotation applies.
+                RotateInternalList(oldIndex, newIndex, movedItems.Count);
+            }
 
-            if (oldCurrentItem != null && IndexOf(oldCurrentItem) >= 0)
+            AdjustCurrencyForMove(oldCurrentItem);
+
+            OnCollectionChanged(
+                new NotifyCollectionChangedEventArgs(
+                    NotifyCollectionChangedAction.Move,
+                    movedItems,
+                    newIndex,
+                    oldIndex));
+
+            RaiseCurrencyChanges(false, oldCurrentItem, oldCurrentPosition, oldIsCurrentBeforeFirst, oldIsCurrentAfterLast);
+        }
+
+        private void ProcessMoveEventUsingSourceList(object movedItem, int oldIndex, int newIndex)
+        {
+            object oldCurrentItem = CurrentItem;
+            int oldCurrentPosition = CurrentPosition;
+            bool oldIsCurrentBeforeFirst = IsCurrentBeforeFirst;
+            bool oldIsCurrentAfterLast = IsCurrentAfterLast;
+
+            AdjustCurrencyForMove(oldCurrentItem);
+
+            OnCollectionChanged(
+            new NotifyCollectionChangedEventArgs(
+            NotifyCollectionChangedAction.Move,
+            movedItem,
+            newIndex,
+            oldIndex));
+
+            RaiseCurrencyChanges(false, oldCurrentItem, oldCurrentPosition, oldIsCurrentBeforeFirst, oldIsCurrentAfterLast);
+        }
+
+        private void ProcessMoveEventUsingLocalArray(object movedItem, int newSourceIndex)
+        {
+            if (Filter != null && !PassesFilter(movedItem))
             {
-                MoveCurrentTo(oldCurrentItem);
+                return;
             }
-            else if (oldIsCurrentBeforeFirst)
+
+            var oldViewIndex = InternalIndexOf(movedItem);
+            if (oldViewIndex < 0)
             {
-                MoveCurrentToPosition(-1);
+                RefreshOrDefer();
+                return;
             }
-            else if (oldIsCurrentAfterLast)
+
+            var newViewIndex = GetFilteredMoveIndex(newSourceIndex, movedItem);
+            if (newViewIndex < 0)
             {
-                MoveCurrentToPosition(Count);
+                RefreshOrDefer();
+                return;
+            }
+
+            if (oldViewIndex == newViewIndex)
+            {
+                return;
+            }
+
+            object oldCurrentItem = CurrentItem;
+            int oldCurrentPosition = CurrentPosition;
+            bool oldIsCurrentBeforeFirst = IsCurrentBeforeFirst;
+            bool oldIsCurrentAfterLast = IsCurrentAfterLast;
+
+            var item = _internalList[oldViewIndex];
+            _internalList.RemoveAt(oldViewIndex);
+            _internalList.Insert(newViewIndex, item);
+
+            AdjustCurrencyForMove(oldCurrentItem);
+
+            OnCollectionChanged(
+            new NotifyCollectionChangedEventArgs(
+            NotifyCollectionChangedAction.Move,
+            movedItem,
+            newViewIndex,
+            oldViewIndex));
+
+            RaiseCurrencyChanges(false, oldCurrentItem, oldCurrentPosition, oldIsCurrentBeforeFirst, oldIsCurrentAfterLast);
+        }
+
+        private int GetFilteredMoveIndex(int newSourceIndex, object movedItem)
+        {
+            if (SourceList != null && newSourceIndex >= 0 && newSourceIndex < SourceList.Count)
+            {
+                return CountPassingItemsBeforeSourceIndex(newSourceIndex);
+            }
+
+            var index = 0;
+            foreach (object item in SourceCollection)
+            {
+                if (IsMoveItemMatch(item, movedItem))
+                {
+                    return index;
+                }
+
+                if (Filter == null || PassesFilter(item))
+                {
+                    index++;
+                }
+            }
+
+            return -1;
+        }
+
+        private int CountPassingItemsBeforeSourceIndex(int sourceIndex)
+        {
+            var index = 0;
+            for (var i = 0; i < sourceIndex; i++)
+            {
+                var item = SourceList[i];
+                if (Filter == null || PassesFilter(item))
+                {
+                    index++;
+                }
+            }
+
+            return index;
+        }
+
+        private static bool IsMoveItemMatch(object item, object movedItem)
+        {
+            if (ReferenceEquals(item, movedItem))
+            {
+                return true;
+            }
+
+            return movedItem == null ? item == null : movedItem.Equals(item);
+        }
+
+        private void AdjustCurrencyForMove(object oldCurrentItem)
+        {
+            if (IsCurrentBeforeFirst || IsCurrentAfterLast)
+            {
+                return;
+            }
+
+            var newPosition = oldCurrentItem == null
+                ? IndexOf(null)
+                : ReferenceIndexOf(oldCurrentItem);
+
+            if (newPosition < 0 && oldCurrentItem != null)
+            {
+                newPosition = IndexOf(oldCurrentItem);
+            }
+
+            if (newPosition >= 0 && (newPosition != CurrentPosition || !IsCurrentInSync))
+            {
+                OnCurrentChanging();
+                SetCurrent(oldCurrentItem, newPosition);
             }
         }
 
@@ -1281,8 +1735,9 @@ namespace Avalonia.Collections
             }
 
             // Collection changes change the count unless an item is being
-            // replaced within the collection.
-            if (args.Action != NotifyCollectionChangedAction.Replace)
+            // replaced or moved within the collection.
+            if (args.Action != NotifyCollectionChangedAction.Replace &&
+                args.Action != NotifyCollectionChangedAction.Move)
             {
                 OnPropertyChanged(nameof(Count));
             }

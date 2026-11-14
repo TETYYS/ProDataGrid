@@ -7,6 +7,7 @@ using System.Collections.ObjectModel;
 using System.Linq;
 using Avalonia.Collections;
 using Avalonia.Controls;
+using Avalonia.Controls.DataGridSelection;
 using Avalonia.Controls.Selection;
 using Avalonia.Data;
 using Avalonia.Headless.XUnit;
@@ -26,13 +27,13 @@ public class DataGridSelectionPagingTests
             PageSize = 2
         };
 
-        var selection = new SelectionModel<string> { SingleSelect = false };
+        var selection = new DataGridSelectionModel<string> { SingleSelect = false };
 
         var grid = CreateGrid(view, selection);
         grid.UpdateLayout();
 
-        selection.Select(0); // first page
-        selection.Select(3); // third page (zero-based global index)
+        selection.SelectAt(0); // first page
+        selection.SelectAt(3); // third page (zero-based global index)
         grid.UpdateLayout();
 
         Assert.Contains(items[0], selection.SelectedItems);
@@ -93,7 +94,7 @@ public class DataGridSelectionPagingTests
         Assert.Equal(boundSelection.Count, selected.Length);
     }
 
-    private static DataGrid CreateGrid(IEnumerable items, SelectionModel<string>? selection = null)
+    private static DataGrid CreateGrid(IEnumerable items, DataGridSelectionModel<string>? selection = null)
     {
         var root = new Window
         {

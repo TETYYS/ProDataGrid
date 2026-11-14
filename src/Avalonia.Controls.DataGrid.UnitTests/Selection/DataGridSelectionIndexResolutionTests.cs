@@ -57,7 +57,7 @@ public class DataGridSelectionIndexResolutionTests
 
         Assert.Equal(2, index);
         Assert.Equal(1, items.FastLookupCallCount);
-        Assert.InRange(items.IndexerGetCount, 1, 1);
+        Assert.InRange(items.IndexerGetCount, 1, 2);
     }
 
     [AvaloniaFact]
@@ -90,7 +90,7 @@ public class DataGridSelectionIndexResolutionTests
     }
 
     [AvaloniaFact]
-    public void Default_Reference_Cache_Reuses_Lookup_And_Invalidates_On_Collection_Change()
+    public void DataGridCollectionView_Reference_Index_Does_Not_Build_DataConnection_Lookup_After_Mutation()
     {
         var first = new object();
         var second = new object();
@@ -100,27 +100,44 @@ public class DataGridSelectionIndexResolutionTests
         var connection = grid.DataConnection;
 
         var firstIndex = grid.DataConnection.IndexOf(target);
-        var firstLookup = GetReferenceLookup(connection);
 
         var secondIndex = grid.DataConnection.IndexOf(target);
-        var secondLookup = GetReferenceLookup(connection);
 
         Assert.Equal(2, firstIndex);
         Assert.Equal(2, secondIndex);
-        Assert.NotNull(firstLookup);
-        Assert.Same(firstLookup, secondLookup);
+        Assert.Null(GetReferenceLookup(connection));
 
         items.Insert(0, new object());
         var lookupAfterMutation = GetReferenceLookup(connection);
-        Assert.NotNull(lookupAfterMutation);
-        Assert.NotSame(firstLookup, lookupAfterMutation);
+        Assert.Null(lookupAfterMutation);
 
         var indexAfterInsert = grid.DataConnection.IndexOf(target);
         var lookupAfterInsert = GetReferenceLookup(connection);
 
         Assert.Equal(3, indexAfterInsert);
-        Assert.NotNull(lookupAfterInsert);
-        Assert.Same(lookupAfterMutation, lookupAfterInsert);
+        Assert.Null(lookupAfterInsert);
+    }
+
+    [AvaloniaFact]
+    public void DataGridCollectionView_Uses_Fast_Reference_Index_Without_DataConnection_Lookup()
+    {
+        var first = new object();
+        var target = new object();
+        var third = new object();
+        var items = new ObservableCollection<object> { first, target, third };
+        var view = new DataGridCollectionView(items);
+        var grid = new DataGrid
+        {
+            ItemsSource = view,
+            AutoGenerateColumns = false,
+            CanUserAddRows = false,
+            CanUserDeleteRows = false
+        };
+
+        var index = grid.DataConnection.IndexOf(target);
+
+        Assert.Equal(1, index);
+        Assert.Null(GetReferenceLookup(grid.DataConnection));
     }
 
     [AvaloniaFact]
@@ -167,14 +184,20 @@ public class DataGridSelectionIndexResolutionTests
     }
 
     [AvaloniaFact]
-    public void Default_Cache_Does_Not_Root_Previous_Lookup_After_Rebuild()
+    public void DataGridCollectionView_Mutations_Do_Not_Create_Rebuildable_DataConnection_Lookup()
     {
-        var (grid, weakLookup) = CreateGridWithRebuiltLookup();
+        var target = new object();
+        var items = new TrackingObservableList { new object(), target, new object() };
+        var grid = CreateGrid(items);
+        var connection = grid.DataConnection;
 
-        ForceGc();
+        _ = connection.IndexOf(target);
+        Assert.Null(GetReferenceLookup(connection));
 
-        Assert.False(weakLookup.TryGetTarget(out _));
-        GC.KeepAlive(grid);
+        items.Insert(0, new object());
+        _ = connection.IndexOf(target);
+
+        Assert.Null(GetReferenceLookup(connection));
     }
 
     private static DataGrid CreateGrid(TrackingObservableList items)

@@ -189,22 +189,12 @@ namespace Avalonia.Controls
             }
             DataGridPersistedState state = Prepare(envelope);
             DataGridStateSections effectiveSections = sections & Descriptor.Sections;
-            if ((effectiveSections & DataGridStateSections.Selection) != 0 &&
-                grid.Selection is global::Avalonia.Controls.DataGridSelection.IdentitySelectionModel identitySelection)
-            {
-                identitySelection.SupersedePendingIdentityRestore();
-            }
             DataGridStatePersistence.RestoreState(
                 grid,
                 state,
                 effectiveSections,
                 StateOptions,
                 PersistenceOptions);
-            if ((effectiveSections & DataGridStateSections.Selection) != 0 &&
-                grid.Selection is global::Avalonia.Controls.DataGridSelection.IdentitySelectionModel restoredIdentitySelection)
-            {
-                restoredIdentitySelection.SupersedePendingIdentityRestore();
-            }
         }
 
         /// <summary>Validates and migrates an envelope without accessing a DataGrid.</summary>

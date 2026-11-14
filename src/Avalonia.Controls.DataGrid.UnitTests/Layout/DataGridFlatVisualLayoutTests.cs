@@ -7,6 +7,7 @@ using System.ComponentModel;
 using System.Linq;
 using Avalonia.Automation.Peers;
 using Avalonia.Controls;
+using Avalonia.Controls.DataGridSelection;
 using Avalonia.Controls.Automation.Peers;
 using Avalonia.Controls.DataGridHierarchical;
 using Avalonia.Controls.DataGridSearching;
@@ -1349,7 +1350,7 @@ public class DataGridFlatVisualLayoutTests
         grid.SelectionUnit = DataGridSelectionUnit.Cell;
         grid.SelectionMode = DataGridSelectionMode.Extended;
         grid.IsReadOnly = true;
-        var selection = new SelectionModel<Item> { SingleSelect = false };
+        var selection = new DataGridSelectionModel<Item> { SingleSelect = false };
         grid.Selection = selection;
 
         try
@@ -1468,12 +1469,13 @@ public class DataGridFlatVisualLayoutTests
     public void Virtualized_Surface_Uses_Idiomatic_SelectionModel_For_FullRow_Selection()
     {
         (Window window, DataGrid grid) = CreateGrid(DataGridTheme.SimpleFlat, useFlatTheme: true);
-        var selection = new SelectionModel<Item> { SingleSelect = false };
-        selection.Select(1);
+        var selection = new DataGridSelectionModel<Item> { SingleSelect = false };
         grid.VisualLayoutMode = DataGridVisualLayoutMode.Virtualized;
         grid.SelectionUnit = DataGridSelectionUnit.FullRow;
         grid.SelectionMode = DataGridSelectionMode.Extended;
         grid.Selection = selection;
+        // Indexes resolve against the grid's view, so the model is attached before selecting by one.
+        selection.SelectAt(1);
 
         try
         {
@@ -1484,7 +1486,7 @@ public class DataGridFlatVisualLayoutTests
             Assert.True(grid.DisplayData.HasVirtualScrollingElements);
             Assert.Empty(presenter.Children.OfType<DataGridRow>());
 
-            selection.Select(3);
+            selection.SelectAt(3);
             PumpLayout(grid);
 
             Assert.Equal(new[] { 1, 3 }, selection.SelectedIndexes.OrderBy(index => index));
@@ -1520,7 +1522,7 @@ public class DataGridFlatVisualLayoutTests
     public void Virtualized_Surface_Keyboard_Extends_Idiomatic_Row_Selection()
     {
         (Window window, DataGrid grid) = CreateGrid(DataGridTheme.SimpleFlat, useFlatTheme: true);
-        var selection = new SelectionModel<Item> { SingleSelect = false };
+        var selection = new DataGridSelectionModel<Item> { SingleSelect = false };
         grid.VisualLayoutMode = DataGridVisualLayoutMode.Virtualized;
         grid.SelectionUnit = DataGridSelectionUnit.FullRow;
         grid.SelectionMode = DataGridSelectionMode.Extended;

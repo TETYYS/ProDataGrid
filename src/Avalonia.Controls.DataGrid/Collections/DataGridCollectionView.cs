@@ -92,7 +92,7 @@ public
 #else
 internal
 #endif
-    sealed partial class DataGridCollectionView : IDataGridCollectionView, IDataGridEditableCollectionView, IList, INotifyPropertyChanged, ITypedList
+    sealed partial class DataGridCollectionView : IDataGridCollectionView, IDataGridEditableCollectionView, IList, INotifyPropertyChanged, ITypedList, Avalonia.Controls.IDataGridIndexOf
     {
         internal event EventHandler<DataGridCollectionViewSourceMutationEventArgs> SourceMutationStarting;
 
@@ -602,6 +602,7 @@ internal
             }
         }
 
+
         /// <summary>
         /// Gets or sets Culture to use during sorting.
         /// </summary>
@@ -895,6 +896,16 @@ internal
         /// Returns the index of the item in the unpaged, filtered, and sorted list, or -1 if not found.
         /// </summary>
         internal int GetGlobalIndexOf(object item) => InternalIndexOf(item);
+
+        /// <summary>
+        /// Returns the reference index of the item in the unpaged, filtered, and sorted list, or -1 if not found.
+        /// </summary>
+        internal int GetGlobalReferenceIndexOf(object item)
+        {
+            return TryGetSourceReferenceIndex(item, out var index)
+                ? index
+                : InternalReferenceIndexOf(item);
+        }
 
         /// <summary>
         /// Gets a value indicating whether this view needs to be refreshed.
@@ -1306,6 +1317,50 @@ internal
                     ProcessCollectionChanged(new NotifyCollectionChangedEventArgs(NotifyCollectionChangedAction.Reset, value));
                 }
             }
+        }
+
+        /// <summary>
+        /// Resolves the view index of <paramref name="item"/> only when the source collection exposes a
+        /// lookup of its own. The view has no reference-to-index map, so there is nothing cheap to offer
+        /// otherwise; callers that need an answer at any cost use <see cref="GetReferenceIndexOf"/>.
+        /// </summary>
+        bool Avalonia.Controls.IDataGridIndexOf.TryGetReferenceIndex(object item, out int index)
+        {
+            EnsureCollectionInSync();
+            VerifyRefreshNotDeferred();
+
+            return TryGetSourceReferenceIndex(item, out index);
+        }
+
+        /// <summary>
+        /// Returns the index of the item in the view using reference semantics, or -1 if not found.
+        /// Falls back to scanning the view when the source cannot resolve the index on its own.
+        /// </summary>
+        internal int GetReferenceIndexOf(object item)
+        {
+            EnsureCollectionInSync();
+            VerifyRefreshNotDeferred();
+
+            return TryGetSourceReferenceIndex(item, out var index)
+                ? index
+                : ReferenceIndexOf(item);
+        }
+
+        private bool TryGetSourceReferenceIndex(object item, out int index)
+        {
+            index = -1;
+            if (!IsUsingSourceList ||
+                SourceList is not Avalonia.Controls.IDataGridIndexOf fastIndex ||
+                !fastIndex.TryGetReferenceIndex(item, out var resolved) ||
+                resolved < 0 ||
+                resolved >= SourceList.Count ||
+                !ReferenceEquals(SourceList[resolved], item))
+            {
+                return false;
+            }
+
+            index = resolved;
+            return true;
         }
 
 

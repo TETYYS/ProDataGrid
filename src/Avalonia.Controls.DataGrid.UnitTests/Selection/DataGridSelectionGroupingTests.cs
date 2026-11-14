@@ -6,6 +6,7 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
 using Avalonia.Controls;
+using Avalonia.Controls.DataGridSelection;
 using Avalonia.Controls.Selection;
 using Avalonia.Data;
 using Avalonia.Headless.XUnit;
@@ -29,11 +30,11 @@ public class DataGridSelectionGroupingTests
         };
 
         dynamic view = CreateGroupedView(items, nameof(Item.Group));
-        var selection = new SelectionModel<Item> { SingleSelect = false };
+        var selection = new DataGridSelectionModel<Item> { SingleSelect = false };
         var grid = CreateGrid(view, selection);
 
-        selection.Select(0);
-        selection.Select(2);
+        selection.SelectAt(0);
+        selection.SelectAt(2);
         grid.UpdateLayout();
 
         var selectedItems = ((System.Collections.IEnumerable)grid.SelectedItems).Cast<Item>().ToList();
@@ -58,10 +59,10 @@ public class DataGridSelectionGroupingTests
         };
 
         dynamic view = CreateGroupedView(items, null); // start ungrouped
-        var selection = new SelectionModel<Item> { SingleSelect = false };
+        var selection = new DataGridSelectionModel<Item> { SingleSelect = false };
         var grid = CreateGrid(view, selection);
 
-        selection.Select(1);
+        selection.SelectAt(1);
         grid.UpdateLayout();
 
         // Add grouping
@@ -98,7 +99,7 @@ public class DataGridSelectionGroupingTests
 
         var grid = new DataGrid
         {
-            Selection = new SelectionModel<Item>(),
+            Selection = new DataGridSelectionModel<Item>(),
             SelectionMode = DataGridSelectionMode.Single,
             AutoScrollToSelectedItem = true,
         };
@@ -159,7 +160,7 @@ public class DataGridSelectionGroupingTests
         ((System.Collections.IList)view.GroupDescriptions).Clear();
     }
 
-    private static DataGrid CreateGrid(System.Collections.IEnumerable items, SelectionModel<Item> selection)
+    private static DataGrid CreateGrid(System.Collections.IEnumerable items, DataGridSelectionModel<Item> selection)
     {
         var root = new Window
         {

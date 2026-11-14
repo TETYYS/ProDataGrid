@@ -162,8 +162,7 @@ internal
         {
             if (CurrentColumnIndex != -1)
             {
-                RestoreSelectionModelBeforeCompletingPendingLayout();
-                _makeFirstDisplayedCellCurrentCellPending = false;
+                                _makeFirstDisplayedCellCurrentCellPending = false;
                 _desiredCurrentColumnIndex = -1;
                 FlushCurrentCellChanged();
                 return;
@@ -213,8 +212,7 @@ internal
 
             SetAndSelectCurrentCell(columnIndex, slot, forceCurrentCellSelection: false);
             AnchorSlot = slot;
-            RestoreSelectionModelBeforeCompletingPendingLayout();
-            _makeFirstDisplayedCellCurrentCellPending = false;
+                        _makeFirstDisplayedCellCurrentCellPending = false;
             _desiredCurrentColumnIndex = -1;
             FlushCurrentCellChanged();
         }

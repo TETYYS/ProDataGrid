@@ -8,6 +8,7 @@ using System.Linq;
 using System.Reflection;
 using Avalonia.Collections;
 using Avalonia.Controls;
+using Avalonia.Controls.DataGridSelection;
 using Avalonia.Controls.Selection;
 using Avalonia.Controls.DataGridSorting;
 using Avalonia.Data;
@@ -121,6 +122,75 @@ public class DataGridSelectedItemsTests
         Assert.True(rows.First(x => x.Index == 2).IsSelected);
         Assert.True(rows.First(x => x.Index == 4).IsSelected);
         Assert.All(rows.Where(x => x.Index != 2 && x.Index != 4), r => Assert.False(r.IsSelected));
+    }
+
+    [AvaloniaFact]
+    public void Adding_To_Bound_SelectedItems_In_Single_Mode_Trims_The_Bound_Collection()
+    {
+        var vm = new SelectionViewModel();
+        var grid = CreateGrid(vm.Items);
+        grid.SelectionMode = DataGridSelectionMode.Single;
+
+        grid.Bind(DataGrid.SelectedItemsProperty, new Binding(nameof(SelectionViewModel.SelectedItems))
+        {
+            Mode = BindingMode.TwoWay,
+            Source = vm
+        });
+
+        vm.SelectedItems.Add(vm.Items[1]);
+        vm.SelectedItems.Add(vm.Items[3]);
+
+        grid.UpdateLayout();
+
+        // Single mode keeps the last one. The consumer owns its collection and nothing else will
+        // correct it, so it has to be trimmed here or it goes on claiming two rows are selected.
+        Assert.Equal(new object[] { vm.Items[3] }, vm.SelectedItems.ToArray());
+        Assert.Equal(vm.Items[3], grid.SelectedItem);
+
+        var rows = GetRows(grid);
+        Assert.True(rows.First(x => x.Index == 3).IsSelected);
+        Assert.All(rows.Where(x => x.Index != 3), r => Assert.False(r.IsSelected));
+    }
+
+    [AvaloniaFact]
+    public void Assigning_A_Multi_Item_SelectedItems_In_Single_Mode_Trims_The_Bound_Collection()
+    {
+        var vm = new SelectionViewModel();
+        vm.SelectedItems.Add(vm.Items[0]);
+        vm.SelectedItems.Add(vm.Items[2]);
+
+        var grid = CreateGrid(vm.Items);
+        grid.SelectionMode = DataGridSelectionMode.Single;
+
+        grid.Bind(DataGrid.SelectedItemsProperty, new Binding(nameof(SelectionViewModel.SelectedItems))
+        {
+            Mode = BindingMode.TwoWay,
+            Source = vm
+        });
+
+        grid.UpdateLayout();
+
+        Assert.Equal(new object[] { vm.Items[2] }, vm.SelectedItems.ToArray());
+        Assert.Equal(vm.Items[2], grid.SelectedItem);
+    }
+
+    [AvaloniaFact]
+    public void SelectAll_Is_A_NoOp_In_Single_Mode()
+    {
+        var vm = new SelectionViewModel();
+        var grid = CreateGrid(vm.Items);
+        grid.SelectionMode = DataGridSelectionMode.Single;
+        grid.SelectedItem = vm.Items[1];
+        grid.UpdateLayout();
+
+        // The row-by-row path underneath lets each row replace the one before it, so this used to
+        // leave the last row selected - which is not "all rows" under any reading, and disagreed
+        // with the selection model, which refuses the same request outright.
+        grid.SelectAll();
+        grid.UpdateLayout();
+
+        Assert.Equal(vm.Items[1], grid.SelectedItem);
+        Assert.Equal(new object[] { vm.Items[1] }, grid.SelectedItems.Cast<object>().ToArray());
     }
 
     [AvaloniaFact]
@@ -366,208 +436,6 @@ public class DataGridSelectedItemsTests
         root.Content = grid;
         root.Show();
         return grid;
-    }
-
-    [AvaloniaFact]
-    public void SelectionSnapshot_Suppressed_During_Changes()
-    {
-        var items = new ObservableCollection<string> { "A", "B", "C" };
-        var grid = CreateGrid(items);
-
-        grid.SelectedItem = items[0];
-        grid.UpdateSelectionSnapshot();
-
-        var initial = GetSelectionSnapshot(grid);
-        Assert.Equal("A", Assert.Single(initial));
-
-        using (grid.BeginSelectionSnapshotSuppression())
-        {
-            grid.SelectedItem = items[1];
-            grid.UpdateLayout();
-            grid.UpdateSelectionSnapshot();
-        }
-
-        var suppressed = GetSelectionSnapshot(grid);
-        Assert.Equal("A", Assert.Single(suppressed));
-
-        grid.SelectedItem = items[2];
-        grid.UpdateLayout();
-        grid.UpdateSelectionSnapshot();
-
-        var updated = GetSelectionSnapshot(grid);
-        Assert.Equal("C", Assert.Single(updated));
-    }
-
-    [AvaloniaFact]
-    public void SelectionSnapshot_Follows_FlushSelectionChanged()
-    {
-        var items = new ObservableCollection<string> { "A", "B", "C" };
-        var grid = CreateGrid(items);
-
-        grid.SelectedItem = items[0];
-        grid.UpdateLayout();
-
-        var initial = GetSelectionSnapshot(grid);
-        Assert.Equal("A", Assert.Single(initial));
-
-        grid.SelectedItem = items[2];
-        grid.UpdateLayout();
-
-        var afterFlush = GetSelectionSnapshot(grid);
-        Assert.Equal("C", Assert.Single(afterFlush));
-    }
-
-    [AvaloniaFact]
-    public void CaptureSelectionSnapshot_Prefers_ModelSnapshot()
-    {
-        var items = new ObservableCollection<string> { "A", "B", "C", "D" };
-        var grid = CreateGrid(items);
-
-        grid.SelectedItems.Add(items[1]);
-        SetSelectionSnapshot(grid, new List<object> { items[3] });
-
-        var snapshot = grid.CaptureSelectionSnapshot();
-        Assert.NotNull(snapshot);
-        Assert.Equal(items[3], Assert.Single(snapshot));
-    }
-
-    [AvaloniaFact]
-    public void CaptureSelectionSnapshot_Falls_Back_To_PendingHierarchicalSnapshot()
-    {
-        var items = new ObservableCollection<string> { "A", "B" };
-        var grid = CreateGrid(items);
-        grid.HierarchicalRowsEnabled = true;
-        grid.HierarchicalModel = new Avalonia.Controls.DataGridHierarchical.HierarchicalModel();
-
-        SetPendingHierarchicalSnapshot(grid, new List<object> { items[1] });
-
-        var snapshot = grid.CaptureSelectionSnapshot();
-        Assert.NotNull(snapshot);
-        Assert.Equal(items[1], Assert.Single(snapshot));
-    }
-
-    [AvaloniaFact]
-    public void CaptureSelectionSnapshot_Uses_SelectionModelIndexes_When_NoModelSnapshot()
-    {
-        var items = new ObservableCollection<string> { "A", "B", "C" };
-        var grid = CreateGrid(items);
-        var selectionModel = new SelectionModel<object> { SingleSelect = false };
-
-        grid.Selection = selectionModel;
-        grid.UpdateLayout();
-
-        selectionModel.Select(1);
-        ClearSelectionSnapshot(grid);
-
-        var snapshot = grid.CaptureSelectionSnapshot();
-        Assert.NotNull(snapshot);
-        Assert.Equal(items[1], Assert.Single(snapshot));
-    }
-
-    [AvaloniaFact]
-    public void CaptureSelectionSnapshot_Ignores_Pending_Hierarchical_Snapshot_When_NotHierarchical()
-    {
-        var items = new ObservableCollection<string> { "A", "B" };
-        var grid = CreateGrid(items);
-        grid.UpdateLayout();
-
-        SetPendingHierarchicalSnapshot(grid, new List<object> { items[1] });
-
-        var snapshot = grid.CaptureSelectionSnapshot();
-        Assert.Null(snapshot);
-    }
-
-    [AvaloniaFact]
-    public void SelectionModel_SourceReset_Clears_Pending_Hierarchical_Caches()
-    {
-        var items = new ObservableCollection<string> { "A", "B" };
-        var grid = CreateGrid(items);
-        grid.UpdateLayout();
-
-        SetPendingHierarchicalSnapshot(grid, new List<object> { items[0] });
-        SetPendingHierarchicalIndexes(grid, new List<int> { 0 });
-
-        InvokeSelectionModelSourceReset(grid);
-
-        Assert.Null(GetPendingHierarchicalSnapshot(grid));
-        Assert.Null(GetPendingHierarchicalIndexes(grid));
-    }
-
-    [AvaloniaFact]
-    public void HasInvalidSelectionIndexes_Ignores_Selection_When_Source_Null()
-    {
-        var model = new StubSelectionModel
-        {
-            Source = null,
-            Count = 0,
-            SelectedIndexes = new List<int> { 1 }
-        };
-
-        var result = InvokeHasInvalidSelectionIndexes(model);
-        Assert.False(result);
-    }
-
-    private static List<object> GetSelectionSnapshot(DataGrid grid)
-    {
-        var field = typeof(DataGrid).GetField("_selectionModelSnapshot", BindingFlags.Instance | BindingFlags.NonPublic);
-        Assert.NotNull(field);
-        return (List<object>)(field!.GetValue(grid) ?? throw new InvalidOperationException("Snapshot not initialized."));
-    }
-
-    private static void SetSelectionSnapshot(DataGrid grid, List<object> snapshot)
-    {
-        var field = typeof(DataGrid).GetField("_selectionModelSnapshot", BindingFlags.Instance | BindingFlags.NonPublic);
-        Assert.NotNull(field);
-        field!.SetValue(grid, snapshot);
-    }
-
-    private static void ClearSelectionSnapshot(DataGrid grid)
-    {
-        var field = typeof(DataGrid).GetField("_selectionModelSnapshot", BindingFlags.Instance | BindingFlags.NonPublic);
-        Assert.NotNull(field);
-        field!.SetValue(grid, null);
-    }
-
-    private static void SetPendingHierarchicalSnapshot(DataGrid grid, List<object> snapshot)
-    {
-        var field = typeof(DataGrid).GetField("_pendingHierarchicalSelectionSnapshot", BindingFlags.Instance | BindingFlags.NonPublic);
-        Assert.NotNull(field);
-        field!.SetValue(grid, snapshot);
-    }
-
-    private static void SetPendingHierarchicalIndexes(DataGrid grid, List<int> indexes)
-    {
-        var field = typeof(DataGrid).GetField("_pendingHierarchicalSelectionIndexes", BindingFlags.Instance | BindingFlags.NonPublic);
-        Assert.NotNull(field);
-        field!.SetValue(grid, indexes);
-    }
-
-    private static IReadOnlyList<object>? GetPendingHierarchicalSnapshot(DataGrid grid)
-    {
-        var field = typeof(DataGrid).GetField("_pendingHierarchicalSelectionSnapshot", BindingFlags.Instance | BindingFlags.NonPublic);
-        Assert.NotNull(field);
-        return (IReadOnlyList<object>?)field!.GetValue(grid);
-    }
-
-    private static IReadOnlyList<int>? GetPendingHierarchicalIndexes(DataGrid grid)
-    {
-        var field = typeof(DataGrid).GetField("_pendingHierarchicalSelectionIndexes", BindingFlags.Instance | BindingFlags.NonPublic);
-        Assert.NotNull(field);
-        return (IReadOnlyList<int>?)field!.GetValue(grid);
-    }
-
-    private static void InvokeSelectionModelSourceReset(DataGrid grid)
-    {
-        var method = typeof(DataGrid).GetMethod("SelectionModel_SourceReset", BindingFlags.Instance | BindingFlags.NonPublic);
-        Assert.NotNull(method);
-        method!.Invoke(grid, new object?[] { grid.Selection, EventArgs.Empty });
-    }
-
-    private static bool InvokeHasInvalidSelectionIndexes(ISelectionModel model)
-    {
-        var method = typeof(DataGrid).GetMethod("HasInvalidSelectionIndexes", BindingFlags.Static | BindingFlags.NonPublic);
-        Assert.NotNull(method);
-        return (bool)method!.Invoke(null, new object[] { model })!;
     }
 
     private static void ApplyIdSort(DataGridCollectionView view, ListSortDirection direction)

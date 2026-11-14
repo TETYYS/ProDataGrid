@@ -372,7 +372,7 @@ public class DataGridHierarchicalFilteringAdapterTests
     }
 
     [AvaloniaFact]
-    public void Real_Grid_Filtering_Preserves_Visible_Selection_And_Does_Not_Resurrect_Hidden_Selection()
+    public void Real_Grid_Filtering_Preserves_Visible_Selection_And_Keeps_Hidden_Selection()
     {
         TreeItem root = CreateTree();
         TreeItem branch = root.Children[0];
@@ -453,9 +453,10 @@ public class DataGridHierarchicalFilteringAdapterTests
             Dispatcher.UIThread.RunJobs();
             grid.UpdateLayout();
 
+            // A filter hides rows without taking them out of the data, so the selection keeps the
+            // row it hides. It is still selected, just not on screen.
             Assert.Equal(previousStructureChanges + 1, structureChanges);
-            Assert.Null(grid.SelectedItem);
-            Assert.Empty(grid.SelectedItems.Cast<object>());
+            Assert.Same(other, Assert.Single(grid.SelectedItems.Cast<object>()));
 
             previousStructureChanges = structureChanges;
             filteringModel.Clear();
@@ -463,8 +464,8 @@ public class DataGridHierarchicalFilteringAdapterTests
             grid.UpdateLayout();
 
             Assert.Equal(previousStructureChanges + 1, structureChanges);
-            Assert.Null(grid.SelectedItem);
-            Assert.Empty(grid.SelectedItems.Cast<object>());
+            Assert.Same(other, grid.SelectedItem);
+            Assert.Same(other, Assert.Single(grid.SelectedItems.Cast<object>()));
             Assert.True(hierarchy.Root.IsExpanded);
             Assert.True(hierarchy.Root.Children[0].IsExpanded);
         }
