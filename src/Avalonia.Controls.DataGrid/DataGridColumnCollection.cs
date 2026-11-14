@@ -212,10 +212,6 @@ namespace Avalonia.Controls
                 dataGridColumn.OwningGrid = _owningGrid;
                 _owningGrid.OnColumnWidthSharingColumnAttached(dataGridColumn);
                 dataGridColumn.RemoveEditingElement();
-                if (dataGridColumn != RowGroupSpacerColumn && dataGridColumn != FillerColumn)
-                {
-                    _owningGrid.InitializeColumnSortDirection(dataGridColumn);
-                }
                 if (dataGridColumn.IsVisible)
                 {
                     VisibleEdgedColumnsWidth += dataGridColumn.ActualWidth;
@@ -235,6 +231,16 @@ namespace Avalonia.Controls
             finally
             {
                 _owningGrid.NoCurrentCellChangeCount--;
+            }
+
+            // Last, and outside the insert, because a column that arrives already sorted - restored
+            // from a saved layout, or declared that way in XAML - applies its sort here and now, and
+            // that re-enters row and column generation. Run it any earlier and that generation is
+            // handed a half-inserted column: ItemsInternal has grown but DisplayIndexMap has not, so
+            // everything walking the columns in display order reads past the end of the map.
+            if (dataGridColumn != RowGroupSpacerColumn && dataGridColumn != FillerColumn)
+            {
+                _owningGrid.InitializeColumnSortDirection(dataGridColumn);
             }
         }
 
