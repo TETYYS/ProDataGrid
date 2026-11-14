@@ -291,6 +291,53 @@ public class ConditionalFormattingModelTests
             .First(row => ReferenceEquals(row.DataContext, item));
     }
 
+    [AvaloniaFact]
+    public void Adapter_Does_Not_Watch_Added_Items_Without_Descriptors()
+    {
+        var model = new ConditionalFormattingModel();
+        var items = new ObservableCollection<SubscriptionCountingItem>();
+        var view = new Avalonia.Collections.DataGridCollectionView(items);
+        var adapter = new DataGridConditionalFormattingAdapter(model, () => Enumerable.Empty<DataGridColumn>());
+        adapter.AttachView(view);
+
+        var item = new SubscriptionCountingItem();
+        items.Add(item);
+
+        Assert.Equal(0, item.SubscriberCount);
+
+        model.Apply(new[]
+        {
+            new ConditionalFormattingDescriptor(
+                ruleId: "rule",
+                @operator: ConditionalFormattingOperator.GreaterThan,
+                columnId: "column",
+                value: 0d,
+                theme: new ControlTheme(typeof(DataGridCell)))
+        });
+
+        Assert.Equal(1, item.SubscriberCount);
+
+        var added = new SubscriptionCountingItem();
+        items.Add(added);
+
+        Assert.Equal(1, added.SubscriberCount);
+
+        adapter.Dispose();
+    }
+
+    private sealed class SubscriptionCountingItem : INotifyPropertyChanged
+    {
+        private PropertyChangedEventHandler? _propertyChanged;
+
+        public int SubscriberCount => _propertyChanged?.GetInvocationList().Length ?? 0;
+
+        public event PropertyChangedEventHandler? PropertyChanged
+        {
+            add => _propertyChanged += value;
+            remove => _propertyChanged -= value;
+        }
+    }
+
     private sealed class ConditionalItem : INotifyPropertyChanged
     {
         private double _value;
