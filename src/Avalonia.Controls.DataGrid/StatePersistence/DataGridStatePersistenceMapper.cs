@@ -111,11 +111,16 @@ namespace Avalonia.Controls
             return result;
         }
 
+        /// <param name="columnDefinitions">
+        /// The grid's column definitions. A sort on a column built from one of them is restored with the
+        /// comparer that column rebuilds, whatever comparer token the persisted state holds for it.
+        /// </param>
         public static DataGridState ToRuntime(
             DataGridPersistedState persisted,
             DataGridStateSections requestedSections,
             DataGridStateOptions stateOptions,
-            DataGridStatePersistenceOptions persistenceOptions)
+            DataGridStatePersistenceOptions persistenceOptions,
+            IEnumerable<DataGridColumnDefinition> columnDefinitions = null)
         {
             if (persisted == null)
             {
@@ -140,7 +145,7 @@ namespace Avalonia.Controls
             }
 
             if (HasSection(targetSections, DataGridStateSections.Sorting)
-                && TryMapSortingToRuntime(persisted.Sorting, context, out var sorting))
+                && TryMapSortingToRuntime(persisted.Sorting, columnDefinitions, context, out var sorting))
             {
                 state.Sorting = sorting;
                 mappedSections |= DataGridStateSections.Sorting;
@@ -478,6 +483,7 @@ namespace Avalonia.Controls
 
         private static bool TryMapSortingToRuntime(
             DataGridPersistedState.SortingState persisted,
+            IEnumerable<DataGridColumnDefinition> columnDefinitions,
             ConversionContext context,
             out DataGridSortingState state)
         {
@@ -516,10 +522,18 @@ namespace Avalonia.Controls
                         continue;
                     }
 
-                    if (!context.TryResolveSortingComparer(
+                    // The grid rebuilds the comparer of a column built from a definition, so a token saved
+                    // for one (state saved before such tokens were left out) is not needed to restore it.
+                    var columnRebuildsComparer = columnDefinitions != null
+                        && columnId != null
+                        && columnDefinitions.Any(definition => definition != null && Equals(definition.ColumnKey, columnId));
+
+                    IComparer comparer = null;
+                    if (!columnRebuildsComparer
+                        && !context.TryResolveSortingComparer(
                             descriptor.ComparerToken,
                             $"Sorting.Descriptors[{i}].ComparerToken",
-                            out var comparer))
+                            out comparer))
                     {
                         continue;
                     }

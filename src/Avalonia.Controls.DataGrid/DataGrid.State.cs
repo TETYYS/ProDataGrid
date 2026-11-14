@@ -1542,6 +1542,19 @@ namespace Avalonia.Controls
                 }
             }
 
+            // Persisted state leaves out the comparer of a sort on a column built from a definition,
+            // so the column supplies it again, the same way sorting it from its header does.
+            if (descriptor.Comparer == null
+                && columnId is DataGridColumn column
+                && DataGridColumnMetadata.GetDefinition(column) != null)
+            {
+                var rebuilt = CreateSortingDescriptorForColumn(column, descriptor.Direction);
+                if (rebuilt != null)
+                {
+                    return rebuilt;
+                }
+            }
+
             return new SortingDescriptor(columnId, descriptor.Direction, descriptor.PropertyPath, descriptor.Comparer, descriptor.Culture);
         }
 

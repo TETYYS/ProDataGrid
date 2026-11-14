@@ -58,7 +58,7 @@ namespace Avalonia.Controls
                 throw new ArgumentNullException(nameof(state));
             }
 
-            var runtimeState = DataGridStatePersistenceMapper.ToRuntime(state, sections, stateOptions, persistenceOptions);
+            var runtimeState = DataGridStatePersistenceMapper.ToRuntime(state, sections, stateOptions, persistenceOptions, grid.ColumnDefinitionsSource);
             grid.RestoreState(runtimeState, runtimeState.Sections, stateOptions);
         }
 

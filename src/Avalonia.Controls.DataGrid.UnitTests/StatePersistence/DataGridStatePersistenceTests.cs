@@ -444,7 +444,75 @@ public class DataGridStatePersistenceTests
                 DataGridStateSections.Sorting);
             grid.UpdateLayout();
 
-            Assert.Equal(ListSortDirection.Descending, Assert.Single(grid.SortingModel.Descriptors).Direction);
+            var restored = Assert.Single(grid.SortingModel.Descriptors);
+            Assert.Equal(ListSortDirection.Descending, restored.Direction);
+            Assert.True(restored.HasComparer);
+            Assert.Equal(new[] { 4, 3, 2, 1, 0 }, view.Cast<StateTestItem>().Select(x => x.Id).ToArray());
+        }
+        finally
+        {
+            root.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public void RestoreState_Ignores_Comparer_Token_Of_Sort_On_ColumnDefinition_Column()
+    {
+        var items = StateTestHelper.CreateItems(5);
+        var view = new DataGridCollectionView(items);
+        var definition = new DataGridTextColumnDefinition
+        {
+            Header = "Id",
+            ColumnKey = "id",
+            Binding = DataGridBindingDefinition.Create<StateTestItem, int>(x => x.Id)
+        };
+
+        var root = new Window
+        {
+            Width = 400,
+            Height = 300
+        };
+        root.SetThemeStyles();
+
+        var grid = new DataGrid
+        {
+            ItemsSource = view,
+            ColumnDefinitionsSource = new[] { definition }
+        };
+
+        root.Content = grid;
+        root.Show();
+
+        try
+        {
+            grid.UpdateLayout();
+
+            // State saved before sorts on definition columns stopped persisting a comparer token.
+            var persisted = new DataGridPersistedState
+            {
+                Version = 1,
+                Sections = DataGridStateSections.Sorting,
+                Sorting = new DataGridPersistedState.SortingState
+                {
+                    MultiSort = true,
+                    Descriptors = new[]
+                    {
+                        new DataGridPersistedState.SortingDescriptorState
+                        {
+                            ColumnId = new DataGridPersistedState.PersistedValue { Type = "string", Value = "id" },
+                            Direction = ListSortDirection.Descending,
+                            ComparerToken = "unresolvable"
+                        }
+                    }
+                }
+            };
+
+            DataGridStatePersistence.RestoreState(grid, persisted, DataGridStateSections.Sorting);
+            grid.UpdateLayout();
+
+            var restored = Assert.Single(grid.SortingModel.Descriptors);
+            Assert.Equal(ListSortDirection.Descending, restored.Direction);
+            Assert.True(restored.HasComparer);
             Assert.Equal(new[] { 4, 3, 2, 1, 0 }, view.Cast<StateTestItem>().Select(x => x.Id).ToArray());
         }
         finally
