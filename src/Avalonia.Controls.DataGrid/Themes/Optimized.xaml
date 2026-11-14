@@ -55,6 +55,30 @@
           <Setter Property="BorderBrush" Value="{StaticResource DataGridCellInfoBrush}" />
           <Setter Property="BorderThickness" Value="1,1,1,1" />
         </Style>
+
+        <!-- Pivot table styles. Last, so they take precedence over the search highlight above -->
+        <Style Selector="^.pivot-row-header:not(:cell-selected)">
+          <Setter Property="Background" Value="{DynamicResource DataGridRowGroupHeaderBackgroundBrush}" />
+          <Setter Property="Foreground" Value="{DynamicResource DataGridRowGroupHeaderForegroundBrush}" />
+        </Style>
+        <Style Selector="^.pivot-values-header">
+          <Setter Property="FontStyle" Value="Italic" />
+        </Style>
+        <Style Selector="^.pivot-subtotal:not(:cell-selected)">
+          <Setter Property="Background" Value="{DynamicResource DataGridRowGroupHeaderBackgroundBrush}" />
+          <Setter Property="Foreground" Value="{DynamicResource DataGridRowGroupHeaderForegroundBrush}" />
+          <Setter Property="FontWeight" Value="SemiBold" />
+        </Style>
+        <Style Selector="^.pivot-grandtotal:not(:cell-selected)">
+          <Setter Property="Background" Value="{DynamicResource DataGridRowGroupHeaderBackgroundBrush}" />
+          <Setter Property="Foreground" Value="{DynamicResource DataGridRowGroupHeaderForegroundBrush}" />
+          <Setter Property="FontWeight" Value="Bold" />
+        </Style>
+
+        <!-- Selection-unit specific hover visuals -->
+        <Style Selector="^:cell-selection-unit:pointerover:not(:cell-selected):not(:searchmatch):not(:searchcurrent)">
+          <Setter Property="Background" Value="{DynamicResource DataGridCellHoveredBackgroundBrush}" />
+        </Style>
       </ControlTheme>
 
       <ControlTheme x:Key="DataGridOptimizedDrawingCellTheme"

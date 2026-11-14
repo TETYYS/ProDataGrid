@@ -17,6 +17,29 @@ namespace Avalonia.Controls.DataGridTests.Selection;
 public class DataGridSelectionPseudoClassTests
 {
     [AvaloniaFact]
+    public void Cell_SelectionUnit_PseudoClass_Follows_Grid_SelectionUnit()
+    {
+        var (grid, root, items) = CreateGrid(DataGridSelectionUnit.Cell);
+        try
+        {
+            var cell = GetCell(grid, items[0], 0);
+            Assert.True(HasPseudoClass(cell, ":cell-selection-unit"));
+
+            grid.SelectionUnit = DataGridSelectionUnit.FullRow;
+            grid.UpdateLayout();
+            Assert.False(HasPseudoClass(cell, ":cell-selection-unit"));
+
+            grid.SelectionUnit = DataGridSelectionUnit.CellOrRowHeader;
+            grid.UpdateLayout();
+            Assert.True(HasPseudoClass(cell, ":cell-selection-unit"));
+        }
+        finally
+        {
+            root.Close();
+        }
+    }
+
+    [AvaloniaFact]
     public void Clearing_Row_Selection_Updates_Cell_PseudoClasses()
     {
         var (grid, root, items) = CreateGrid(DataGridSelectionUnit.FullRow);
