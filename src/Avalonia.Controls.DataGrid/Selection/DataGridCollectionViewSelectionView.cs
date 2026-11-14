@@ -107,6 +107,12 @@ namespace Avalonia.Controls.DataGridSelection
         {
             var indexes = _indexes ??= BuildIndexes();
 
+            if (_view.SourceCollection is IDataGridSourceMembership membership)
+            {
+                // The source filters itself, so enumerating it would miss what it holds but hides
+                return item => item is not null && (indexes.ContainsKey(item) || membership.ContainsSourceItem(item));
+            }
+
             if (_view.SourceCollection is not IEnumerable source)
             {
                 // No separate source to consult - the view is all there is.
