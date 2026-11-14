@@ -211,14 +211,21 @@ namespace Avalonia.Collections
                     return list.GetEnumerator();
                 }
 
-                for (int index = _pageSize * PageIndex;
-                index < (int)Math.Min(_pageSize * (PageIndex + 1), InternalList.Count);
-                index++)
+                // Built from the page's own indexes rather than copied out of a window onto the
+                // internal list. While an add is pending the page gives its last slot to the new
+                // item, so the row that slot displaced has already moved to the next page - but the
+                // internal list still holds that row inside the window, and may hold the new item
+                // outside it. Copying the window would hand back the displaced row as well as the
+                // new one: more rows than Count promises.
+                int count = Count;
+                for (int index = 0; index < count; index++)
                 {
-                    list.Add(InternalList[index]);
+                    list.Add(ItemAtUngrouped(index, count));
                 }
 
-                return new NewItemAwareEnumerator(this, list.GetEnumerator(), CurrentAddItem);
+                // The new item is already in its place above, so there is nothing left for the
+                // enumerator to position.
+                return new NewItemAwareEnumerator(this, list.GetEnumerator(), newItem: null);
             }
             else
             {
@@ -262,6 +269,20 @@ namespace Avalonia.Collections
                 return RootGroup?.LeafAt(_isUsingTemporaryGroup ? ConvertToInternalIndex(index) : index);
             }
 
+            return ItemAtUngrouped(index, count);
+        }
+
+        /// <summary>
+        /// The item this view shows at <paramref name="index"/> while it is not grouping, given the
+        /// view's <paramref name="count"/>.
+        /// </summary>
+        /// <remarks>
+        /// The one place that decides where a pending new item sits - the last slot the view has -
+        /// so that the indexer and <see cref="GetEnumerator"/> cannot disagree about what the view
+        /// is showing.
+        /// </remarks>
+        private object ItemAtUngrouped(int index, int count)
+        {
             if (IsAddingNew && UsesLocalArray && index == count - 1)
             {
                 return CurrentAddItem;
