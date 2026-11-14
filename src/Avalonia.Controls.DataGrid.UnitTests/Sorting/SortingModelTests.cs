@@ -69,6 +69,60 @@ public class SortingModelTests
         Assert.True(model.MultiSort);
         Assert.Equal(SortCycleMode.AscendingDescending, model.CycleMode);
         Assert.True(model.OwnsViewSorts);
+        Assert.False(model.KeepSecondarySorts);
+    }
+
+    [Fact]
+    public void Toggle_With_KeepSecondarySorts_Puts_New_Column_First_And_Keeps_Others()
+    {
+        var model = new SortingModel { KeepSecondarySorts = true };
+
+        model.Toggle(CreateDescriptor("col1"));
+        model.Toggle(CreateDescriptor("col2"));
+
+        Assert.Equal(new object[] { "col2", "col1" }, model.Descriptors.Select(d => d.ColumnId).ToArray());
+    }
+
+    [Fact]
+    public void Toggle_With_KeepSecondarySorts_Promotes_Existing_Column_And_Cycles_It()
+    {
+        var model = new SortingModel { KeepSecondarySorts = true };
+        model.Toggle(CreateDescriptor("col1"));
+        model.Toggle(CreateDescriptor("col2"));
+
+        model.Toggle(CreateDescriptor("col1"));
+
+        Assert.Equal(new object[] { "col1", "col2" }, model.Descriptors.Select(d => d.ColumnId).ToArray());
+        Assert.Equal(ListSortDirection.Descending, model.Descriptors[0].Direction);
+        Assert.Equal(ListSortDirection.Ascending, model.Descriptors[1].Direction);
+    }
+
+    [Fact]
+    public void Toggle_With_KeepSecondarySorts_Clears_All_When_Primary_Cycles_Off()
+    {
+        var model = new SortingModel
+        {
+            KeepSecondarySorts = true,
+            CycleMode = SortCycleMode.AscendingDescendingNone
+        };
+        model.Toggle(CreateDescriptor("col1"));
+        model.Toggle(CreateDescriptor("col2"));
+
+        model.Toggle(CreateDescriptor("col2"));
+        model.Toggle(CreateDescriptor("col2"));
+
+        Assert.Empty(model.Descriptors);
+    }
+
+    [Fact]
+    public void Toggle_With_KeepSecondarySorts_And_Multi_Modifier_Appends()
+    {
+        var model = new SortingModel { KeepSecondarySorts = true };
+        model.Toggle(CreateDescriptor("col1"));
+
+        model.Toggle(CreateDescriptor("col2"), SortingModifiers.Multi);
+
+        Assert.Equal(new object[] { "col1", "col2" }, model.Descriptors.Select(d => d.ColumnId).ToArray());
     }
 
     [Fact]
