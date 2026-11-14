@@ -21,10 +21,15 @@ namespace Avalonia.Controls
 {
     internal static class DataGridStatePersistenceMapper
     {
+        /// <param name="columnDefinitions">
+        /// The grid's column definitions. A sort on a column built from one of them can leave its
+        /// comparer out of the persisted state, because the column rebuilds it when the sort is restored.
+        /// </param>
         public static DataGridPersistedState ToPersisted(
             DataGridState state,
             DataGridStateOptions stateOptions,
-            DataGridStatePersistenceOptions persistenceOptions)
+            DataGridStatePersistenceOptions persistenceOptions,
+            IEnumerable<DataGridColumnDefinition> columnDefinitions = null)
         {
             if (state == null)
             {
@@ -47,7 +52,7 @@ namespace Avalonia.Controls
             }
 
             if (HasSection(state.Sections, DataGridStateSections.Sorting)
-                && TryMapSortingToPersisted(state.Sorting, context, out var sorting))
+                && TryMapSortingToPersisted(state.Sorting, columnDefinitions, context, out var sorting))
             {
                 result.Sorting = sorting;
                 persistedSections |= DataGridStateSections.Sorting;
@@ -406,6 +411,7 @@ namespace Avalonia.Controls
 
         private static bool TryMapSortingToPersisted(
             DataGridSortingState state,
+            IEnumerable<DataGridColumnDefinition> columnDefinitions,
             ConversionContext context,
             out DataGridPersistedState.SortingState persisted)
         {
@@ -426,8 +432,15 @@ namespace Avalonia.Controls
                         continue;
                     }
 
+                    // A column built from a definition derives its comparer from that definition, and
+                    // derives it again when the sort is restored without one. There is nothing to persist.
+                    var columnRebuildsComparer = columnDefinitions != null
+                        && descriptor.ColumnId != null
+                        && columnDefinitions.Any(definition => definition != null && Equals(definition.ColumnKey, descriptor.ColumnId));
+
                     string comparerToken = null;
                     if (descriptor.Comparer != null
+                        && !columnRebuildsComparer
                         && !context.TryGetSortingComparerToken(
                             descriptor,
                             $"Sorting.Descriptors[{i}].Comparer",

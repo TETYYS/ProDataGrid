@@ -35,7 +35,7 @@ namespace Avalonia.Controls
             }
 
             var runtimeState = grid.CaptureState(sections, stateOptions);
-            return DataGridStatePersistenceMapper.ToPersisted(runtimeState, stateOptions, persistenceOptions);
+            return DataGridStatePersistenceMapper.ToPersisted(runtimeState, stateOptions, persistenceOptions, grid.ColumnDefinitionsSource);
         }
 
         /// <summary>

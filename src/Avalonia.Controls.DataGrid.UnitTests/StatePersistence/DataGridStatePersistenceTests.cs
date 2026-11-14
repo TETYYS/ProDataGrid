@@ -351,6 +351,109 @@ public class DataGridStatePersistenceTests
     }
 
     [Fact]
+    public void Mapper_Persists_ColumnDefinition_Sort_Without_Comparer_Token()
+    {
+        var definition = new DataGridTextColumnDefinition
+        {
+            ColumnKey = "name",
+            CustomSortComparer = StringComparer.OrdinalIgnoreCase
+        };
+
+        var runtime = new DataGridState
+        {
+            Sections = DataGridStateSections.Sorting,
+            Sorting = new DataGridSortingState
+            {
+                Descriptors = new[]
+                {
+                    new SortingDescriptor("name", ListSortDirection.Descending, comparer: definition.CustomSortComparer)
+                }
+            }
+        };
+
+        Assert.Throws<DataGridStatePersistenceException>(() =>
+            DataGridStatePersistenceMapper.ToPersisted(runtime, stateOptions: null, persistenceOptions: null));
+
+        var persisted = DataGridStatePersistenceMapper.ToPersisted(
+            runtime,
+            stateOptions: null,
+            persistenceOptions: null,
+            columnDefinitions: new DataGridColumnDefinition[] { definition });
+
+        var descriptor = Assert.Single(persisted.Sorting.Descriptors);
+        Assert.Null(descriptor.ComparerToken);
+        Assert.Equal(ListSortDirection.Descending, descriptor.Direction);
+
+        var restored = DataGridStatePersistenceMapper.ToRuntime(
+            persisted,
+            DataGridStateSections.All,
+            stateOptions: null,
+            persistenceOptions: null);
+
+        var restoredDescriptor = Assert.Single(restored.Sorting.Descriptors);
+        Assert.Equal("name", restoredDescriptor.ColumnId);
+        Assert.Null(restoredDescriptor.Comparer);
+    }
+
+    [AvaloniaFact]
+    public void CaptureAndRestoreState_RoundTrips_Sort_On_ColumnDefinition_Column()
+    {
+        var items = StateTestHelper.CreateItems(5);
+        var view = new DataGridCollectionView(items);
+        var definition = new DataGridTextColumnDefinition
+        {
+            Header = "Id",
+            ColumnKey = "id",
+            Binding = DataGridBindingDefinition.Create<StateTestItem, int>(x => x.Id)
+        };
+
+        var root = new Window
+        {
+            Width = 400,
+            Height = 300
+        };
+        root.SetThemeStyles();
+
+        var grid = new DataGrid
+        {
+            ItemsSource = view,
+            ColumnDefinitionsSource = new[] { definition }
+        };
+
+        root.Content = grid;
+        root.Show();
+
+        try
+        {
+            grid.UpdateLayout();
+            var column = grid.ColumnsInternal.First(c => Equals(c.Header, "Id"));
+            column.SortDirection = ListSortDirection.Descending;
+            grid.UpdateLayout();
+            Assert.True(Assert.Single(grid.SortingModel.Descriptors).HasComparer);
+
+            var persisted = DataGridStatePersistence.CaptureState(grid, DataGridStateSections.Sorting);
+            var payload = DataGridStatePersistence.Serialize(persisted);
+
+            grid.SortingModel.Clear();
+            grid.UpdateLayout();
+            Assert.Empty(view.SortDescriptions);
+
+            DataGridStatePersistence.RestoreState(
+                grid,
+                DataGridStatePersistence.Deserialize(payload),
+                DataGridStateSections.Sorting);
+            grid.UpdateLayout();
+
+            Assert.Equal(ListSortDirection.Descending, Assert.Single(grid.SortingModel.Descriptors).Direction);
+            Assert.Equal(new[] { 4, 3, 2, 1, 0 }, view.Cast<StateTestItem>().Select(x => x.Id).ToArray());
+        }
+        finally
+        {
+            root.Close();
+        }
+    }
+
+    [Fact]
     public void Mapper_RoundTrips_FilteringPredicateToken()
     {
         Func<object, bool> predicate = _ => true;
