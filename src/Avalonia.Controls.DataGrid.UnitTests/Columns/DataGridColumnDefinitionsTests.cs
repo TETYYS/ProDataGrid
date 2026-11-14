@@ -847,6 +847,109 @@ public class DataGridColumnDefinitionsTests
     }
 
     [AvaloniaFact]
+    public void ColumnDefinitionsSource_Keeps_User_Width_And_Order_After_Reattach()
+    {
+        var definitions = new ObservableCollection<DataGridColumnDefinition>
+        {
+            new DataGridTextColumnDefinition
+            {
+                Header = "Name",
+                Binding = DataGridBindingDefinition.Create<Person, string>(p => p.Name),
+                Width = new DataGridLength(80, DataGridLengthUnitType.Pixel)
+            },
+            new DataGridTextColumnDefinition
+            {
+                Header = "Age",
+                Binding = DataGridBindingDefinition.Create<Person, int>(p => p.Age),
+                Width = new DataGridLength(80, DataGridLengthUnitType.Pixel)
+            }
+        };
+
+        var (window, grid) = CreateDefinitionsWindow(
+            new ObservableCollection<Person> { new Person { Name = "Ada", Age = 36 } },
+            definitions);
+
+        try
+        {
+            window.Show();
+            Dispatcher.UIThread.RunJobs();
+            grid.UpdateLayout();
+
+            var name = GetNonFillerColumns(grid).Single(c => Equals(c.Header, "Name"));
+            var age = GetNonFillerColumns(grid).Single(c => Equals(c.Header, "Age"));
+            name.Width = new DataGridLength(150, DataGridLengthUnitType.Pixel);
+            age.DisplayIndex = 0;
+            grid.UpdateLayout();
+
+            window.Content = null;
+            Dispatcher.UIThread.RunJobs();
+
+            window.Content = grid;
+            Dispatcher.UIThread.RunJobs();
+            grid.UpdateLayout();
+
+            Assert.Equal(new DataGridLength(150, DataGridLengthUnitType.Pixel), name.Width);
+            Assert.Equal(0, age.DisplayIndex);
+            Assert.Equal(1, name.DisplayIndex);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public void ColumnDefinitionsSource_Source_Reorder_Wins_Over_User_Order()
+    {
+        var definitions = new ObservableCollection<DataGridColumnDefinition>
+        {
+            new DataGridTextColumnDefinition
+            {
+                Header = "Name",
+                Binding = DataGridBindingDefinition.Create<Person, string>(p => p.Name)
+            },
+            new DataGridTextColumnDefinition
+            {
+                Header = "Age",
+                Binding = DataGridBindingDefinition.Create<Person, int>(p => p.Age)
+            },
+            new DataGridTextColumnDefinition
+            {
+                Header = "Active",
+                Binding = DataGridBindingDefinition.Create<Person, bool>(p => p.IsActive)
+            }
+        };
+
+        var (window, grid) = CreateDefinitionsWindow(
+            new ObservableCollection<Person> { new Person { Name = "Ada", Age = 36 } },
+            definitions);
+
+        try
+        {
+            window.Show();
+            Dispatcher.UIThread.RunJobs();
+            grid.UpdateLayout();
+
+            GetNonFillerColumns(grid).Single(c => Equals(c.Header, "Active")).DisplayIndex = 0;
+            grid.UpdateLayout();
+
+            definitions.Move(0, 1);
+            Dispatcher.UIThread.RunJobs();
+            grid.UpdateLayout();
+
+            var headers = GetNonFillerColumns(grid)
+                .OrderBy(c => c.DisplayIndex)
+                .Select(c => c.Header)
+                .ToArray();
+            Assert.Equal(new object[] { "Age", "Name", "Active" }, headers);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
     public void ColumnDefinitionsSource_AddRange_Materializes_Columns()
     {
         var definitions = new DataGridColumnDefinitionList();
