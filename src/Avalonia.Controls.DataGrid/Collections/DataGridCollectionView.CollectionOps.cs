@@ -1022,10 +1022,15 @@ namespace Avalonia.Collections
                     var sortFieldComparer = new MergedComparer(this);
 
                     // check if the item would be in sorted order if inserted into the specified index
-                    // otherwise, calculate the correct sorted index
+                    // otherwise, calculate the correct sorted index.
+                    // The second bound is Count, not Count - 1: the test is whether there is an item
+                    // at index for the new one to be sitting in front of, and the last position has
+                    // one just as much as any other. With Count - 1 an item landing there was never
+                    // compared, so a replacement whose sort key put it last stayed where the removal
+                    // had left it - {1,2,3} sorted ascending became {1,5,3} on replacing 2 with 5.
                     if (index < 0 || /* if item was not originally part of list */
                     (index > 0 && (sortFieldComparer.Compare(item, InternalItemAt(index - 1)) < 0)) || /* item has moved up in the list */
-                    ((index < InternalList.Count - 1) && (sortFieldComparer.Compare(item, InternalItemAt(index)) > 0))) /* item has moved down in the list */
+                    ((index < InternalList.Count) && (sortFieldComparer.Compare(item, InternalItemAt(index)) > 0))) /* item has moved down in the list */
                     {
                         index = sortFieldComparer.FindInsertIndex(item, _internalList);
                     }

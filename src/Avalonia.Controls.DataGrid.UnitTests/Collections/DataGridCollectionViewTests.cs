@@ -61,6 +61,30 @@ public class DataGridCollectionViewTests
     private sealed record GroupedItem(string Name, string Group);
 
     [Fact]
+    public void Insert_When_Sorted_At_Last_Position_Still_Sorts_The_Item()
+    {
+        var items = new ObservableCollection<int> { 1, 3 };
+        var view = new DataGridCollectionView(items);
+        view.SortDescriptions.Add(DataGridSortDescription.FromComparer(Comparer<int>.Default));
+
+        items.Insert(1, 5);
+
+        Assert.Equal(new[] { 1, 3, 5 }, view.Cast<int>().ToArray());
+    }
+
+    [Fact]
+    public void Replace_When_Sorted_Puts_A_Replacement_That_Sorts_Last_At_The_End()
+    {
+        var items = new ObservableCollection<int> { 1, 2, 3 };
+        var view = new DataGridCollectionView(items);
+        view.SortDescriptions.Add(DataGridSortDescription.FromComparer(Comparer<int>.Default));
+
+        items[1] = 5;
+
+        Assert.Equal(new[] { 1, 3, 5 }, view.Cast<int>().ToArray());
+    }
+
+    [Fact]
     public void Move_Reorders_View_And_Raises_Remove_Then_Add()
     {
         var items = new ObservableCollection<int> { 1, 2, 3, 4 };
