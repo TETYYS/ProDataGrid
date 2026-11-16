@@ -398,44 +398,25 @@ namespace Avalonia.Controls
             object oldCurrentItem = ProjectSelectionItem(CurrentCell.Item);
             object oldCurrencyItem = ProjectSelectionItem(DataConnection?.CollectionView?.CurrentItem);
 
-            int prospectiveCapacity = prospectiveSource is ICollection collection
-                ? collection.Count
-                : 0;
-            var prospectiveRows = prospectiveCapacity > 0
-                ? new List<ProspectiveSelectionRow>(prospectiveCapacity)
-                : new List<ProspectiveSelectionRow>();
-            if (prospectiveSource != null)
-            {
-                foreach (object rowDataContext in prospectiveSource)
-                {
-                    CreateSelectionItemContext(
-                        rowDataContext,
-                        out object item,
-                        out HierarchicalNode node,
-                        out IReadOnlyList<HierarchicalNode> path);
-                    prospectiveRows.Add(new ProspectiveSelectionRow(rowDataContext, item, node, path));
-                }
-            }
-
             var selectedItems = selectionSnapshot ?? Array.Empty<object>();
             var projectedSelectedItems = new List<object>(selectedItems.Count);
-            var requestedIdentities = new List<object>(
+            var identityMap = new ProspectiveIdentityMap(
                 selectedItems.Count + selectedCells.Count + 3);
             for (int i = 0; i < selectedItems.Count; i++)
             {
                 object selectedItem = ProjectSelectionItem(selectedItems[i]);
                 projectedSelectedItems.Add(selectedItem);
-                AddReferenceIdentity(requestedIdentities, selectedItem);
+                identityMap.Add(selectedItem);
             }
-            AddReferenceIdentity(requestedIdentities, oldCurrentItem);
-            AddReferenceIdentity(requestedIdentities, oldAnchorItem);
-            AddReferenceIdentity(requestedIdentities, oldCurrencyItem);
+            identityMap.Add(oldCurrentItem);
+            identityMap.Add(oldAnchorItem);
+            identityMap.Add(oldCurrencyItem);
             for (int i = 0; i < selectedCells.Count; i++)
             {
-                AddReferenceIdentity(requestedIdentities, selectedCells[i].Item);
+                identityMap.Add(selectedCells[i].Item);
             }
 
-            var identityMap = new ProspectiveIdentityMap(prospectiveRows, requestedIdentities);
+            identityMap.Resolve(prospectiveSource);
             var oldSelectedRowIndexes = new List<int>();
             foreach (int selectedSlot in GetSelectedSlots())
             {
@@ -524,7 +505,7 @@ namespace Avalonia.Controls
                 proposedColumn = ColumnsItemsInternal[proposedColumnIndex];
             }
             DataGridCellInfo proposedCurrentCell = CreateProspectiveCellInfo(
-                prospectiveRows,
+                identityMap,
                 proposedCurrentIndex,
                 proposedColumnIndex);
             int proposedAnchorIndex = preserveSelection
@@ -535,7 +516,7 @@ namespace Avalonia.Controls
                 proposedAnchorIndex = proposedCurrentIndex;
             }
             DataGridSelectionAnchorInfo proposedAnchor = CreateProspectiveAnchorInfo(
-                prospectiveRows,
+                identityMap,
                 proposedAnchorIndex,
                 oldAnchor.IsValid ? oldAnchor.ColumnIndex : proposedColumnIndex);
 
@@ -556,10 +537,10 @@ namespace Avalonia.Controls
 
             HierarchicalNode hierarchyNode = null;
             IReadOnlyList<HierarchicalNode> hierarchyPath = Array.Empty<HierarchicalNode>();
-            if (proposedCurrentIndex >= 0)
+            if (identityMap.TryGetRow(proposedCurrentIndex, out ProspectiveSelectionRow proposedCurrentRow))
             {
-                hierarchyNode = prospectiveRows[proposedCurrentIndex].Node;
-                hierarchyPath = prospectiveRows[proposedCurrentIndex].HierarchyPath;
+                hierarchyNode = proposedCurrentRow.Node;
+                hierarchyPath = proposedCurrentRow.HierarchyPath;
             }
 
             var args = new DataGridSelectionChangingEventArgs(
@@ -991,24 +972,6 @@ namespace Avalonia.Controls
             ReplaceSelectedCellsAfterItemsSourceMutation(remapped);
         }
 
-        private static void AddReferenceIdentity(List<object> identities, object item)
-        {
-            if (item == null)
-            {
-                return;
-            }
-
-            for (int i = 0; i < identities.Count; i++)
-            {
-                if (ReferenceEquals(identities[i], item))
-                {
-                    return;
-                }
-            }
-
-            identities.Add(item);
-        }
-
         private DataGridSelectionRowInfo CreateSourceMutationRowInfo(object item, int oldRowIndex)
         {
             HierarchicalNode node = FindMaterializedHierarchyNode(item);
@@ -1041,11 +1004,11 @@ namespace Avalonia.Controls
         }
 
         private DataGridCellInfo CreateProspectiveCellInfo(
-            List<ProspectiveSelectionRow> rows,
+            ProspectiveIdentityMap rows,
             int rowIndex,
             int columnIndex)
         {
-            if (rowIndex < 0 || rowIndex >= rows.Count ||
+            if (!rows.TryGetRow(rowIndex, out ProspectiveSelectionRow row) ||
                 columnIndex < 0 || columnIndex >= ColumnsItemsInternal.Count)
             {
                 return DataGridCellInfo.Unset;
@@ -1058,7 +1021,7 @@ namespace Avalonia.Controls
             }
 
             return new DataGridCellInfo(
-                rows[rowIndex].RowDataContext,
+                row.RowDataContext,
                 column,
                 rowIndex,
                 columnIndex,
@@ -1066,16 +1029,15 @@ namespace Avalonia.Controls
         }
 
         private static DataGridSelectionAnchorInfo CreateProspectiveAnchorInfo(
-            List<ProspectiveSelectionRow> rows,
+            ProspectiveIdentityMap rows,
             int rowIndex,
             int columnIndex)
         {
-            if (rowIndex < 0 || rowIndex >= rows.Count || columnIndex < 0)
+            if (!rows.TryGetRow(rowIndex, out ProspectiveSelectionRow row) || columnIndex < 0)
             {
                 return DataGridSelectionAnchorInfo.Unset;
             }
 
-            ProspectiveSelectionRow row = rows[rowIndex];
             return new DataGridSelectionAnchorInfo(
                 row.RowDataContext,
                 row.Item,
@@ -1938,72 +1900,122 @@ namespace Avalonia.Controls
         /// Repeated uses of the same reference (selection, current cell, anchor, currency, and
         /// selected cells) intentionally share one resolved row.
         /// </summary>
+        /// <remarks>
+        /// Only the rows the identities resolve to are kept, so a mutation of a large source
+        /// costs one pass over it, ended at the last identity found, and no copy of its rows.
+        /// </remarks>
         private sealed class ProspectiveIdentityMap
         {
-            private readonly IReadOnlyList<object> _identities;
-            private readonly int[] _indexes;
+            private readonly Dictionary<object, int> _positions;
+            private readonly List<object> _identities;
+            private int[] _indexes = Array.Empty<int>();
+            private ProspectiveSelectionRow[] _rows = Array.Empty<ProspectiveSelectionRow>();
 
-            public ProspectiveIdentityMap(
-                List<ProspectiveSelectionRow> rows,
-                IReadOnlyList<object> identities)
+            public ProspectiveIdentityMap(int capacity)
             {
-                _identities = identities;
-                _indexes = new int[identities.Count];
-                Array.Fill(_indexes, -1);
-                var consumedRows = new bool[rows.Count];
+                _positions = new Dictionary<object, int>(capacity, ReferenceEqualityComparer.Instance);
+                _identities = new List<object>(capacity);
+            }
 
-                for (int identityIndex = 0; identityIndex < identities.Count; identityIndex++)
+            public void Add(object identity)
+            {
+                if (identity != null && _positions.TryAdd(identity, _identities.Count))
                 {
-                    object identity = identities[identityIndex];
-                    for (int rowIndex = 0; rowIndex < rows.Count; rowIndex++)
+                    _identities.Add(identity);
+                }
+            }
+
+            public void Resolve(IEnumerable prospectiveSource)
+            {
+                _indexes = new int[_identities.Count];
+                Array.Fill(_indexes, -1);
+                _rows = new ProspectiveSelectionRow[_identities.Count];
+                if (_identities.Count == 0 || prospectiveSource == null)
+                {
+                    return;
+                }
+
+                int unresolved = _identities.Count;
+                int rowIndex = 0;
+                foreach (object rowDataContext in prospectiveSource)
+                {
+                    object item = GetItem(rowDataContext);
+                    if (item != null &&
+                        _positions.TryGetValue(item, out int position) &&
+                        _indexes[position] < 0)
                     {
-                        if (!consumedRows[rowIndex] &&
-                            ReferenceEquals(rows[rowIndex].Item, identity))
+                        _indexes[position] = rowIndex;
+                        _rows[position] = CreateRow(rowDataContext);
+                        if (--unresolved == 0)
                         {
-                            _indexes[identityIndex] = rowIndex;
-                            consumedRows[rowIndex] = true;
-                            break;
+                            return;
                         }
+                    }
+
+                    rowIndex++;
+                }
+
+                var consumedRows = new HashSet<int>();
+                for (int position = 0; position < _indexes.Length; position++)
+                {
+                    if (_indexes[position] >= 0)
+                    {
+                        consumedRows.Add(_indexes[position]);
                     }
                 }
 
-                for (int identityIndex = 0; identityIndex < identities.Count; identityIndex++)
+                for (int position = 0; position < _indexes.Length; position++)
                 {
-                    if (_indexes[identityIndex] >= 0)
+                    if (_indexes[position] >= 0)
                     {
                         continue;
                     }
 
-                    object identity = identities[identityIndex];
-                    for (int rowIndex = 0; rowIndex < rows.Count; rowIndex++)
+                    object identity = _identities[position];
+                    rowIndex = 0;
+                    foreach (object rowDataContext in prospectiveSource)
                     {
-                        if (!consumedRows[rowIndex] &&
-                            Equals(rows[rowIndex].Item, identity))
+                        if (!consumedRows.Contains(rowIndex) &&
+                            Equals(GetItem(rowDataContext), identity))
                         {
-                            _indexes[identityIndex] = rowIndex;
-                            consumedRows[rowIndex] = true;
+                            _indexes[position] = rowIndex;
+                            _rows[position] = CreateRow(rowDataContext);
+                            consumedRows.Add(rowIndex);
                             break;
                         }
+
+                        rowIndex++;
                     }
                 }
             }
 
             public int GetIndex(object item)
             {
-                if (item == null)
-                {
-                    return -1;
-                }
+                return item != null && _positions.TryGetValue(item, out int position)
+                    ? _indexes[position]
+                    : -1;
+            }
 
-                for (int i = 0; i < _identities.Count; i++)
-                {
-                    if (ReferenceEquals(_identities[i], item))
-                    {
-                        return _indexes[i];
-                    }
-                }
+            public bool TryGetRow(int rowIndex, out ProspectiveSelectionRow row)
+            {
+                int position = rowIndex >= 0 ? Array.IndexOf(_indexes, rowIndex) : -1;
+                row = position >= 0 ? _rows[position] : default;
+                return position >= 0;
+            }
 
-                return -1;
+            private static object GetItem(object rowDataContext)
+            {
+                return (rowDataContext as HierarchicalNode)?.Item ?? rowDataContext;
+            }
+
+            private static ProspectiveSelectionRow CreateRow(object rowDataContext)
+            {
+                CreateSelectionItemContext(
+                    rowDataContext,
+                    out object item,
+                    out HierarchicalNode node,
+                    out IReadOnlyList<HierarchicalNode> path);
+                return new ProspectiveSelectionRow(rowDataContext, item, node, path);
             }
         }
 
