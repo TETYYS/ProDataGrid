@@ -169,25 +169,9 @@ internal
                     return true; // Already visible since we're editing it
                 }
 
-                var currentColumn = OwningGrid.CurrentColumn;
-                if (currentColumn == null || !currentColumn.IsVisible)
+                if (row.Slot >= 0 && row.Slot < OwningGrid.SlotCount)
                 {
-                    currentColumn = OwningGrid.ColumnsInternal.FirstVisibleNonFillerColumn;
-                }
-
-                if (currentColumn != null &&
-                    row.Slot >= 0 &&
-                    row.Slot < OwningGrid.SlotCount)
-                {
-                    OwningGrid.ScrollSlotIntoView(
-                        currentColumn.Index,
-                        row.Slot,
-                        forCurrentCellChange: false,
-                        forceHorizontalScroll: false);
-                }
-                else
-                {
-                    OwningGrid.ScrollIntoView(OwningGrid.DataConnection.GetDataItem(row.Index), null);
+                    OwningGrid.ScrollSlotIntoView(row.Slot, scrolledHorizontally: false);
                 }
                 return true;
             }
